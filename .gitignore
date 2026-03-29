@@ -6,6 +6,9 @@ data/audio_wav/
 data/audio_scores/
 *.wav
 
+# results
+results/
+
 # Optional
 data/audio/
 
