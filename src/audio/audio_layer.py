@@ -85,7 +85,7 @@ def process_file(input_path, output_dir):
 # -------------------------
 def main():
     input_dir = "data/audio"
-    output_dir = "data/audio_scores"
+    output_dir = "results/audio/audio_scores"
 
     os.makedirs(output_dir, exist_ok=True)
 

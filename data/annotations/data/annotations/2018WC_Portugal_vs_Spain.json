@@ -1,0 +1,10 @@
+{
+  "match_id": "2018WC_Portugal_vs_Spain",
+  "events": [
+    {"start": 370, "end": 371, "type": "goal"},
+    {"start": 1544, "end": 1545, "type": "goal"},
+    {"start": 2779, "end": 2780, "type": "goal"},
+    {"start": 3514, "end": 3518, "type": "goal"},
+    {"start": 5484, "end": 5487, "type": "goal"}
+  ]
+}
