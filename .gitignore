@@ -1,0 +1,18 @@
+# Environments
+venv/
+
+# Data
+data/audio_wav/
+data/audio_scores/
+*.wav
+
+# results
+results/
+
+# Optional
+data/raw/*
+
+# Python
+__pycache__/
+*.pyc
+
