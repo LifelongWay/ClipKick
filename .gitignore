@@ -10,7 +10,7 @@ data/audio_scores/
 results/
 
 # Optional
-data/audio/
+data/raw/*
 
 # Python
 __pycache__/
