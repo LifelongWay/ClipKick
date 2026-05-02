@@ -1,13 +1,13 @@
 {
   "match_id": "2025_26_LaLiga_Betis_vs_FC_Barcelona_MD15",
   "events": [
-    {"start": 4259, "end": 4260, "type": "goal"},  // 1:10:59 - 1:11:00
-    {"start": 2703, "end": 2705, "type": "goal"},  // 45:03 - 45:05
-    {"start": 2204, "end": 2219, "type": "goal"},  // 36:44 - 36:59
-    {"start": 988, "end": 990, "type": "goal"},    // 16:28 - 16:30
-    {"start": 676, "end": 680, "type": "goal"},    // 11:16 - 11:20
-    {"start": 1100, "end": 1104, "type": "goal"},  // 18:20 - 18:24
-    {"start": 5803, "end": 5806, "type": "goal"},  // 1:36:43 - 1:36:46
-    {"start": 6150, "end": 6151, "type": "goal"}   // 1:42:30 - 1:42:31
+    {"start": 4259, "end": 4260, "type": "goal"},
+    {"start": 2703, "end": 2705, "type": "goal"},
+    {"start": 2204, "end": 2219, "type": "goal"},
+    {"start": 988, "end": 990, "type": "goal"},
+    {"start": 676, "end": 680, "type": "goal"},
+    {"start": 1100, "end": 1104, "type": "goal"},
+    {"start": 5803, "end": 5806, "type": "goal"},
+    {"start": 6150, "end": 6151, "type": "goal"}
   ]
 }
