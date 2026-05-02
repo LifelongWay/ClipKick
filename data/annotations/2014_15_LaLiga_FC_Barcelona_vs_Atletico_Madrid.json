@@ -1,9 +1,9 @@
 {
   "match_id": "2014_15_LaLiga_FC_Barcelona_vs_Atletico_Madrid",
   "events": [
-    {"start": 1004, "end": 1006, "type": "goal"},  // 16:44 - 16:46
-    {"start": 2400, "end": 2402, "type": "goal"},  // 40:00 - 40:02
-    {"start": 3928, "end": 3929, "type": "goal"},  // 1:05:28 - 1:05:29
-    {"start": 5728, "end": 5730, "type": "goal"}   // 1:35:28 - 1:35:30
+    {"start": 1004, "end": 1006, "type": "goal"}, 
+    {"start": 2400, "end": 2402, "type": "goal"},
+    {"start": 3928, "end": 3929, "type": "goal"},
+    {"start": 5728, "end": 5730, "type": "goal"}
   ]
 }
