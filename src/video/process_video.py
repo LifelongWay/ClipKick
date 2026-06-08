@@ -9,6 +9,7 @@ import torch
 from collections import deque
 from transformers import pipeline
 from PIL import Image
+from tqdm import tqdm
 
 
 def pick_device():
@@ -59,7 +60,10 @@ def main():
     parser.add_argument("--events", required=True)
     args = parser.parse_args()
 
-    dino_model = pipeline("zero-shot-object-detection", model="IDEA-Research/grounding-dino-base", device=pick_device())
+    device = pick_device()
+    print(f"Vision Layer utilizing execution device: {device}")
+
+    dino_model = pipeline("zero-shot-object-detection", model="IDEA-Research/grounding-dino-base", device=device)
     candidate_labels = ["white metal goalpost", "mesh netting", "person in white uniform", "person in dark uniform",
                         "soccer ball", "white shoe"]
 
@@ -95,6 +99,18 @@ def main():
     else:
         merged_windows = [[0, total_frames, total_frames]]
 
+    # --- Optimization Parameters ---
+    FRAME_STRIDE = 6  # Run heavy AI inference every 6th frame (~5 times per second)
+    MODEL_W = 640
+    MODEL_H = int(640 * h_vid / w_vid)
+    scale_x = w_vid / MODEL_W
+    scale_y = h_vid / MODEL_H
+
+    # Calculate total processing load for accurate progress bar tracking
+    total_window_frames = sum(max_e - start for start, _, max_e in merged_windows)
+    pbar = tqdm(total=total_window_frames, desc="Processing Video Windows", unit="frame")
+    # -------------------------------
+
     goal_tracker = None
     goal_tracking_active = False
     MISS_COOLDOWN = fps * 3
@@ -115,7 +131,7 @@ def main():
     window_idx = 0
     frames_processed = 0
     actual_processed_windows = []
-    vision_goal_events = []   # structured output for the fusion layer (F2)
+    vision_goal_events = []
 
     while cap.isOpened() and window_idx < len(merged_windows):
         target_start, min_target_end, max_target_end = merged_windows[window_idx]
@@ -140,7 +156,7 @@ def main():
 
         frame_count += 1
         frames_processed += 1
-        frame_start = time.time()
+        pbar.update(1)
 
         hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         curr_hist = cv2.calcHist([hsv_frame], [0, 1], None, [50, 60], [0, 180, 0, 256])
@@ -162,30 +178,47 @@ def main():
                 window_idx += 1
                 continue
 
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(frame_rgb)
-        dino_results = dino_model(image=pil_image, candidate_labels=candidate_labels)
+        # Heavy Object Detection Pipeline (Throttled & Downsampled)
+        should_run_dino = (frame_count % FRAME_STRIDE == 0) or (not goal_tracking_active and cooldown_frames_left == 0)
+
+        if should_run_dino:
+            small_frame = cv2.resize(frame, (MODEL_W, MODEL_H))
+            frame_rgb = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+            pil_image = Image.fromarray(frame_rgb)
+            dino_results = dino_model(image=pil_image, candidate_labels=candidate_labels)
+        else:
+            dino_results = []
 
         current_goal_bbox = None
 
         if cooldown_frames_left > 0:
             cooldown_frames_left -= 1
-        elif frame_count == target_start or not goal_tracking_active:
+        elif (frame_count == target_start or not goal_tracking_active) and should_run_dino:
             valid_results = []
             for r in dino_results:
                 if r['score'] < 0.30 or r['label'] not in ["white metal goalpost", "mesh netting"]: continue
+
+                # Scale coordinates back to original video dimensions
                 box = r['box']
-                box_w, box_h = box['xmax'] - box['xmin'], box['ymax'] - box['ymin']
+                xmin = int(box['xmin'] * scale_x)
+                ymin = int(box['ymin'] * scale_y)
+                xmax = int(box['xmax'] * scale_x)
+                ymax = int(box['ymax'] * scale_y)
+                box_w, box_h = xmax - xmin, ymax - ymin
+
                 if box_w < 80 and box_h < 80: continue
                 if (box_w * box_h) > (w_vid * h_vid * 0.40):
-                    y1, y2 = max(0, int(box['ymin'])), min(h_vid, int(box['ymax']))
-                    x1, x2 = max(0, int(box['xmin'])), min(w_vid, int(box['xmax']))
+                    y1, y2 = max(0, ymin), min(h_vid, ymax)
+                    x1, x2 = max(0, xmin), min(w_vid, xmax)
                     if y2 <= y1 or x2 <= x1: continue
                     crop = frame[y1:y2, x1:x2]
                     hsv_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
                     green_mask = cv2.inRange(hsv_crop, LOWER_GREEN, UPPER_GREEN)
                     grass_ratio = cv2.countNonZero(green_mask) / (box_w * box_h) if (box_w * box_h) > 0 else 1.0
                     if grass_ratio > 0.80: continue
+
+                # Repack scaled result
+                r['scaled_bbox'] = (xmin, ymin, box_w, box_h)
                 valid_results.append(r)
 
             best_match = None
@@ -197,8 +230,7 @@ def main():
                 if netting: best_match = max(netting, key=lambda x: x['score'])
 
             if best_match:
-                box = best_match['box']
-                dino_bbox = (box['xmin'], box['ymin'], box['xmax'] - box['xmin'], box['ymax'] - box['ymin'])
+                dino_bbox = best_match['scaled_bbox']
                 try:
                     goal_tracker = cv2.TrackerCSRT_create()
                 except AttributeError:
@@ -230,17 +262,25 @@ def main():
         if ball_initialized: pf.predict()
 
         best_det = None
-        ball_candidates = [r for r in dino_results if r['label'] == 'soccer ball' and r['score'] >= 0.15]
-        if ball_candidates:
-            best_ball = max(ball_candidates, key=lambda x: x['score'])
-            box = best_ball['box']
-            bw = int(box['xmax'] - box['xmin'])
-            bh = int(box['ymax'] - box['ymin'])
-            bx = int(box['xmin']) + bw // 2
-            by = int(box['ymin']) + bh // 2
+        if should_run_dino:
+            ball_candidates = [r for r in dino_results if r['label'] == 'soccer ball' and r['score'] >= 0.15]
+            if ball_candidates:
+                best_ball = max(ball_candidates, key=lambda x: x['score'])
+                box = best_ball['box']
 
-            if bw <= 60 and bh <= 60 and 0.5 <= (bw / float(max(1, bh))) <= 2.0:
-                best_det = [bx, by, bw, bh]
+                # Rescale ball box parameters
+                bx_min = int(box['xmin'] * scale_x)
+                by_min = int(box['ymin'] * scale_y)
+                bx_max = int(box['xmax'] * scale_x)
+                by_max = int(box['ymax'] * scale_y)
+
+                bw = bx_max - bx_min
+                bh = by_max - by_min
+                bx = bx_min + bw // 2
+                by = by_min + bh // 2
+
+                if bw <= 60 and bh <= 60 and 0.5 <= (bw / float(max(1, bh))) <= 2.0:
+                    best_det = [bx, by, bw, bh]
 
         if best_det and ball_initialized:
             current_state = pf.get_state()
@@ -303,6 +343,7 @@ def main():
 
         out.write(frame)
 
+    pbar.close()
     cap.release()
     out.release()
     total_time = time.time() - start_time
@@ -313,7 +354,6 @@ def main():
     else:
         print("Video processing complete.")
 
-    # ── Structured vision output for the fusion layer (F2) ──
     vbase = os.path.splitext(os.path.basename(args.audio))[0]
     os.makedirs("results/vision/events", exist_ok=True)
     os.makedirs("results/vision/windows", exist_ok=True)
@@ -327,8 +367,7 @@ def main():
          for s, e in actual_processed_windows],
         columns=["start_sec", "end_sec"],
     ).to_csv(f"results/vision/windows/{vbase}.csv", index=False)
-    print(f"Vision: {len(vision_goal_events)} goal events, "
-          f"{len(actual_processed_windows)} windows → results/vision/")
+    print(f"Vision: {len(vision_goal_events)} goal events, {len(actual_processed_windows)} windows → results/vision/")
 
     try:
         from moviepy import VideoFileClip, AudioFileClip, concatenate_audioclips
