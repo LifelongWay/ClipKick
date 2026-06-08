@@ -16,6 +16,7 @@ FUSION_SCRIPT = {
     "A": "src/fusion/fuse_decision.py",
     "B": "src/fusion/fuse_stacked.py",
     "E": "src/fusion/fuse_progressive.py",
+    "F": "src/fusion/fuse_slm.py",
 }
 
 
@@ -29,7 +30,7 @@ def main():
     parser.add_argument("--video", required=True)
     parser.add_argument("--audio", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--fusion", choices=["A", "B", "E", "none"], default="A")
+    parser.add_argument("--fusion", choices=["A", "B", "E", "F", "none"], default="A")
     parser.add_argument("--speech-mode", choices=["sliding", "gated"], default="sliding")
     parser.add_argument("--skip-vision", action="store_true")
     args = parser.parse_args()
@@ -52,6 +53,13 @@ def main():
         run(["python", FUSION_SCRIPT["E"], "--match", base, "--audio", args.audio])
         print(f"Highlights → results/fusion/highlights/{base}.csv "
               f"(+ {base}_preliminary.csv from Pass 1)")
+        return
+
+    # Model F is self-contained too: Granite transcript (cached) → SLM reasoning.
+    # No F1 speech CSV, no F2 timeline, no vision.
+    if args.fusion == "F":
+        run(["python", FUSION_SCRIPT["F"], "--match", base, "--audio", args.audio])
+        print(f"Highlights → results/fusion/highlights/{base}.csv")
         return
 
     # 2. Speech layer (F1) — Granite keyword/excitement signals (for A/B).
