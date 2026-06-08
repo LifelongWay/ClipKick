@@ -9,6 +9,7 @@ import torch
 from collections import deque
 from transformers import pipeline
 from PIL import Image
+from ultralytics import YOLO
 from tqdm import tqdm
 
 
@@ -24,6 +25,8 @@ def pick_device():
 class ParticleFilter:
     def __init__(self, num_particles, width, height):
         self.num_particles = num_particles
+        self.width = width
+        self.height = height
         self.particles = np.zeros((num_particles, 4))
         self.weights = np.ones(num_particles) / num_particles
 
@@ -61,11 +64,14 @@ def main():
     args = parser.parse_args()
 
     device = pick_device()
-    print(f"Vision Layer utilizing execution device: {device}")
+    print(f"🚀 Initializing Dual Vision System on device: {device}")
 
+    # 1. Goal Structure Spotter: Grounding DINO (Fires rarely / when tracker drops)
     dino_model = pipeline("zero-shot-object-detection", model="IDEA-Research/grounding-dino-base", device=device)
-    candidate_labels = ["white metal goalpost", "mesh netting", "person in white uniform", "person in dark uniform",
-                        "soccer ball", "white shoe"]
+    dino_labels = ["white metal goalpost", "mesh netting"]
+
+    # 2. High-Speed Ball Tracker: Native YOLO (Fires every frame)
+    yolo_model = YOLO("yolo11m.pt")
 
     cap = cv2.VideoCapture(args.input)
     w_vid = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -99,17 +105,14 @@ def main():
     else:
         merged_windows = [[0, total_frames, total_frames]]
 
-    # --- Optimization Parameters ---
-    FRAME_STRIDE = 6  # Run heavy AI inference every 6th frame (~5 times per second)
-    MODEL_W = 640
-    MODEL_H = int(640 * h_vid / w_vid)
-    scale_x = w_vid / MODEL_W
-    scale_y = h_vid / MODEL_H
+    # --- Video Optimization Scaling for DINO ---
+    DINO_W = 640
+    DINO_H = int(640 * h_vid / w_vid)
+    scale_x = w_vid / DINO_W
+    scale_y = h_vid / DINO_H
 
-    # Calculate total processing load for accurate progress bar tracking
     total_window_frames = sum(max_e - start for start, _, max_e in merged_windows)
     pbar = tqdm(total=total_window_frames, desc="Processing Video Windows", unit="frame")
-    # -------------------------------
 
     goal_tracker = None
     goal_tracking_active = False
@@ -118,6 +121,7 @@ def main():
     LOWER_GREEN = np.array([35, 40, 40])
     UPPER_GREEN = np.array([85, 255, 255])
 
+    # Ball tracking state tools
     pf = ParticleFilter(2000, w_vid, h_vid)
     ball_initialized = False
     consecutive_rejections = 0
@@ -158,6 +162,7 @@ def main():
         frames_processed += 1
         pbar.update(1)
 
+        # Broadcast Camera Cut Detection
         hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         curr_hist = cv2.calcHist([hsv_frame], [0, 1], None, [50, 60], [0, 180, 0, 256])
         cv2.normalize(curr_hist, curr_hist, 0, 1, cv2.NORM_MINMAX)
@@ -178,27 +183,64 @@ def main():
                 window_idx += 1
                 continue
 
-        # Heavy Object Detection Pipeline (Throttled & Downsampled)
-        should_run_dino = (frame_count % FRAME_STRIDE == 0) or (not goal_tracking_active and cooldown_frames_left == 0)
+        # =======================================================
+        # PHASE 1: HIGH-SPEED BALL TRACKING (YOLOv11 - EVERY FRAME)
+        # =======================================================
+        if ball_initialized:
+            pf.predict()
 
-        if should_run_dino:
-            small_frame = cv2.resize(frame, (MODEL_W, MODEL_H))
-            frame_rgb = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-            pil_image = Image.fromarray(frame_rgb)
-            dino_results = dino_model(image=pil_image, candidate_labels=candidate_labels)
-        else:
-            dino_results = []
+        # Run optimized YOLOv11 inference directly on the MPS device back-end
+        yolo_results = yolo_model.predict(frame, imgsz=640, conf=0.1, classes=[32], device=device, verbose=False)
 
+        best_ball_det = None
+        if len(yolo_results[0].boxes) > 0:
+            # Grab top confident soccer ball tracking box
+            box = yolo_results[0].boxes[0]
+            best_ball_det = box.xywh[0].tolist()  # [center_x, center_y, width, height]
+
+        # Particle filter gating logic
+        if best_ball_det and ball_initialized:
+            current_state = pf.get_state()
+            dist = np.sqrt((current_state[0] - best_ball_det[0]) ** 2 + (current_state[1] - best_ball_det[1]) ** 2)
+            if dist > 100:  # Max allowable jump threshold
+                consecutive_rejections += 1
+                if consecutive_rejections > 10:
+                    pf.initialize(best_ball_det[0], best_ball_det[1])
+                    consecutive_rejections = 0
+                else:
+                    best_ball_det = None
+            else:
+                consecutive_rejections = 0
+
+        if best_ball_det:
+            if not ball_initialized:
+                pf.initialize(best_ball_det[0], best_ball_det[1])
+                ball_initialized = True
+            else:
+                pf.update([best_ball_det[0], best_ball_det[1]])
+            ball_w, ball_h = best_ball_det[2], best_ball_det[3]
+
+        ball_state = pf.get_state() if ball_initialized else None
+        if ball_state is not None:
+            ball_history.append((int(ball_state[0]), int(ball_state[1]), ball_w))
+
+        # =======================================================
+        # PHASE 2: STATIC GOAL DETECTION & TRACKING (DINO + CSRT)
+        # =======================================================
         current_goal_bbox = None
 
         if cooldown_frames_left > 0:
             cooldown_frames_left -= 1
-        elif (frame_count == target_start or not goal_tracking_active) and should_run_dino:
+        elif frame_count == target_start or not goal_tracking_active:
+            # DINO ONLY fires if we don't have an active tracking lock on the target structure
+            small_frame = cv2.resize(frame, (DINO_W, DINO_H))
+            frame_rgb = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+            pil_image = Image.fromarray(frame_rgb)
+            dino_results = dino_model(image=pil_image, candidate_labels=dino_labels)
+
             valid_results = []
             for r in dino_results:
-                if r['score'] < 0.30 or r['label'] not in ["white metal goalpost", "mesh netting"]: continue
-
-                # Scale coordinates back to original video dimensions
+                if r['score'] < 0.30: continue
                 box = r['box']
                 xmin = int(box['xmin'] * scale_x)
                 ymin = int(box['ymin'] * scale_y)
@@ -217,7 +259,6 @@ def main():
                     grass_ratio = cv2.countNonZero(green_mask) / (box_w * box_h) if (box_w * box_h) > 0 else 1.0
                     if grass_ratio > 0.80: continue
 
-                # Repack scaled result
                 r['scaled_bbox'] = (xmin, ymin, box_w, box_h)
                 valid_results.append(r)
 
@@ -232,12 +273,20 @@ def main():
             if best_match:
                 dino_bbox = best_match['scaled_bbox']
                 try:
-                    goal_tracker = cv2.TrackerCSRT_create()
+                    # Preferred: Modern OpenCV 4.x Contrib CSRT syntax
+                    goal_tracker = cv2.TrackerCSRT.create()
                 except AttributeError:
                     try:
+                        # Fallback 1: Legacy namespace if using an older wheel build
                         goal_tracker = cv2.legacy.TrackerCSRT_create()
                     except AttributeError:
-                        goal_tracker = cv2.TrackerKCF_create()
+                        try:
+                            # Fallback 2: Stable Core MIL tracker (available everywhere in 4.x)
+                            goal_tracker = cv2.TrackerMIL.create()
+                        except AttributeError:
+                            # Fallback 3: Old-style Core MIL creation method
+                            goal_tracker = cv2.TrackerMIL_create()
+
                 goal_tracker.init(frame, dino_bbox)
                 goal_tracking_active = True
                 current_goal_bbox = dino_bbox
@@ -246,6 +295,7 @@ def main():
                 cooldown_frames_left = MISS_COOLDOWN
 
         elif goal_tracking_active:
+            # If tracking is active, update using ultra-fast native C++ CSRT tracker (No deep math)
             success, tracked_bbox = goal_tracker.update(frame)
             if success:
                 x, y, w, h = [int(v) for v in tracked_bbox]
@@ -259,55 +309,9 @@ def main():
             else:
                 goal_tracking_active = False
 
-        if ball_initialized: pf.predict()
-
-        best_det = None
-        if should_run_dino:
-            ball_candidates = [r for r in dino_results if r['label'] == 'soccer ball' and r['score'] >= 0.15]
-            if ball_candidates:
-                best_ball = max(ball_candidates, key=lambda x: x['score'])
-                box = best_ball['box']
-
-                # Rescale ball box parameters
-                bx_min = int(box['xmin'] * scale_x)
-                by_min = int(box['ymin'] * scale_y)
-                bx_max = int(box['xmax'] * scale_x)
-                by_max = int(box['ymax'] * scale_y)
-
-                bw = bx_max - bx_min
-                bh = by_max - by_min
-                bx = bx_min + bw // 2
-                by = by_min + bh // 2
-
-                if bw <= 60 and bh <= 60 and 0.5 <= (bw / float(max(1, bh))) <= 2.0:
-                    best_det = [bx, by, bw, bh]
-
-        if best_det and ball_initialized:
-            current_state = pf.get_state()
-            dist = np.sqrt((current_state[0] - best_det[0]) ** 2 + (current_state[1] - best_det[1]) ** 2)
-            if dist > 100:
-                consecutive_rejections += 1
-                if consecutive_rejections > 10:
-                    pf.initialize(best_det[0], best_det[1])
-                    consecutive_rejections = 0
-                else:
-                    best_det = None
-            else:
-                consecutive_rejections = 0
-
-        if best_det:
-            if not ball_initialized:
-                pf.initialize(best_det[0], best_det[1])
-                ball_initialized = True
-            else:
-                pf.update([best_det[0], best_det[1]])
-            ball_w, ball_h = best_det[2], best_det[3]
-
-        ball_state = pf.get_state() if ball_initialized else None
-        if ball_state is not None:
-            bx, by = int(ball_state[0]), int(ball_state[1])
-            ball_history.append((bx, by, ball_w))
-
+        # =======================================================
+        # PHASE 3: INTERSECTION / FUSION PHYSICS
+        # =======================================================
         if current_goal_bbox and len(ball_history) >= 5:
             gx, gy, gw, gh = [int(v) for v in current_goal_bbox]
             curr_bx, curr_by, _ = ball_history[-1]
@@ -322,14 +326,14 @@ def main():
                     ancient_bx, ancient_by, _ = ball_history[0]
                     if math.dist((old_bx, old_by), (ancient_bx, ancient_by)) > 25:
                         confirmed_goal_frames = 45
-                        vision_goal_events.append({"time_sec": round(frame_count / fps, 2),
-                                                   "confidence": 0.8})
+                        vision_goal_events.append({"time_sec": round(frame_count / fps, 2), "confidence": 0.8})
                         ball_history.clear()
 
+        # Visual Annotations
         if current_goal_bbox:
             x, y, w, h = [int(v) for v in current_goal_bbox]
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 255), 4)
-            cv2.putText(frame, "Goal Track", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            cv2.putText(frame, "Goal Track (CSRT)", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
         if ball_state is not None:
             bx, by = int(ball_state[0]), int(ball_state[1])
@@ -358,13 +362,11 @@ def main():
     os.makedirs("results/vision/events", exist_ok=True)
     os.makedirs("results/vision/windows", exist_ok=True)
     pd.DataFrame(
-        [{"time_sec": e["time_sec"], "type": "goal", "confidence": e["confidence"]}
-         for e in vision_goal_events],
+        [{"time_sec": e["time_sec"], "type": "goal", "confidence": e["confidence"]} for e in vision_goal_events],
         columns=["time_sec", "type", "confidence"],
     ).to_csv(f"results/vision/events/{vbase}.csv", index=False)
     pd.DataFrame(
-        [{"start_sec": round(s / fps, 2), "end_sec": round(e / fps, 2)}
-         for s, e in actual_processed_windows],
+        [{"start_sec": round(s / fps, 2), "end_sec": round(e / fps, 2)} for s, e in actual_processed_windows],
         columns=["start_sec", "end_sec"],
     ).to_csv(f"results/vision/windows/{vbase}.csv", index=False)
     print(f"Vision: {len(vision_goal_events)} goal events, {len(actual_processed_windows)} windows → results/vision/")
@@ -385,13 +387,11 @@ def main():
         if audio_clips:
             final_audio = concatenate_audioclips(audio_clips)
             final_video = video_clip.with_audio(final_audio)
-
             final_output_path = args.output.replace(".mp4", "_with_audio.mp4")
             final_video.write_videofile(final_output_path, codec="libx264", audio_codec="aac", logger=None)
 
         video_clip.close()
         original_audio.close()
-
     except ImportError:
         pass
 
