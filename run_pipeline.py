@@ -36,9 +36,15 @@ def main():
 
     base = os.path.splitext(os.path.basename(args.audio))[0]
     events_csv = f"results/audio/events/{base}.csv"
+    speech_events_csv = f"results/speech/events/{base}.csv"
+
+    print(f"\n--- Initializing Pipeline for: {base} ---")
 
     # 1. Audio energy layer (whole match) — proposes candidate windows.
-    run(["python", "src/audio/audio_layer.py"])
+    if os.path.exists(events_csv):
+        print(f"› [CACHED] Skipping Audio Layer. Found existing output: {events_csv}")
+    else:
+        run(["python", "src/audio/audio_layer.py"])
 
     # Model E is self-contained: it drives Granite itself in two passes and uses
     # neither the F1 speech CSV nor the F2 timeline nor vision. Skip those stages.
@@ -49,7 +55,10 @@ def main():
         return
 
     # 2. Speech layer (F1) — Granite keyword/excitement signals (for A/B).
-    run(["python", "src/speech/speech_layer.py", "--audio", args.audio, "--mode", args.speech_mode])
+    if os.path.exists(speech_events_csv):
+        print(f"› [CACHED] Skipping Speech Layer. Found existing output: {speech_events_csv}")
+    else:
+        run(["python", "src/speech/speech_layer.py", "--audio", args.audio, "--mode", args.speech_mode])
 
     # 3. Vision (gated to audio windows) — optional/expensive.
     if not args.skip_vision:
