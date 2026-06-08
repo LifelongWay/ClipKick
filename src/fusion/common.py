@@ -193,9 +193,9 @@ def prf(tp, fp, fn):
     return p, r, f
 
 
-def write_highlights(match_id, highlights, out_dir=HIGHLIGHTS_DIR):
+def write_highlights(match_id, highlights, out_dir=HIGHLIGHTS_DIR, suffix=""):
     os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, match_id + ".csv")
+    path = os.path.join(out_dir, match_id + suffix + ".csv")
     pd.DataFrame(highlights, columns=["start", "end", "event_type", "score"]).to_csv(path, index=False)
     print(f"[{match_id}] wrote {len(highlights)} highlights → {path}")
     return path

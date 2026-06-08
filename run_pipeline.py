@@ -40,7 +40,15 @@ def main():
     # 1. Audio energy layer (whole match) — proposes candidate windows.
     run(["python", "src/audio/audio_layer.py"])
 
-    # 2. Speech layer (F1) — Granite keyword/excitement signals.
+    # Model E is self-contained: it drives Granite itself in two passes and uses
+    # neither the F1 speech CSV nor the F2 timeline nor vision. Skip those stages.
+    if args.fusion == "E":
+        run(["python", FUSION_SCRIPT["E"], "--match", base, "--audio", args.audio])
+        print(f"Highlights → results/fusion/highlights/{base}.csv "
+              f"(+ {base}_preliminary.csv from Pass 1)")
+        return
+
+    # 2. Speech layer (F1) — Granite keyword/excitement signals (for A/B).
     run(["python", "src/speech/speech_layer.py", "--audio", args.audio, "--mode", args.speech_mode])
 
     # 3. Vision (gated to audio windows) — optional/expensive.
