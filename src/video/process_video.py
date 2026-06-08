@@ -5,9 +5,19 @@ import os
 import math
 import pandas as pd
 import argparse
+import torch
 from collections import deque
 from transformers import pipeline
 from PIL import Image
+
+
+def pick_device():
+    """cuda on Colab, mps on Apple Silicon, cpu fallback — same script everywhere."""
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 class ParticleFilter:
@@ -49,7 +59,7 @@ def main():
     parser.add_argument("--events", required=True)
     args = parser.parse_args()
 
-    dino_model = pipeline("zero-shot-object-detection", model="IDEA-Research/grounding-dino-base", device="mps")
+    dino_model = pipeline("zero-shot-object-detection", model="IDEA-Research/grounding-dino-base", device=pick_device())
     candidate_labels = ["white metal goalpost", "mesh netting", "person in white uniform", "person in dark uniform",
                         "soccer ball", "white shoe"]
 
@@ -105,6 +115,7 @@ def main():
     window_idx = 0
     frames_processed = 0
     actual_processed_windows = []
+    vision_goal_events = []   # structured output for the fusion layer (F2)
 
     while cap.isOpened() and window_idx < len(merged_windows):
         target_start, min_target_end, max_target_end = merged_windows[window_idx]
@@ -271,6 +282,8 @@ def main():
                     ancient_bx, ancient_by, _ = ball_history[0]
                     if math.dist((old_bx, old_by), (ancient_bx, ancient_by)) > 25:
                         confirmed_goal_frames = 45
+                        vision_goal_events.append({"time_sec": round(frame_count / fps, 2),
+                                                   "confidence": 0.8})
                         ball_history.clear()
 
         if current_goal_bbox:
@@ -299,6 +312,23 @@ def main():
             f"Video processing complete. Frames: {frames_processed}, Time: {total_time:.2f}s, FPS: {frames_processed / total_time:.2f}")
     else:
         print("Video processing complete.")
+
+    # ── Structured vision output for the fusion layer (F2) ──
+    vbase = os.path.splitext(os.path.basename(args.audio))[0]
+    os.makedirs("results/vision/events", exist_ok=True)
+    os.makedirs("results/vision/windows", exist_ok=True)
+    pd.DataFrame(
+        [{"time_sec": e["time_sec"], "type": "goal", "confidence": e["confidence"]}
+         for e in vision_goal_events],
+        columns=["time_sec", "type", "confidence"],
+    ).to_csv(f"results/vision/events/{vbase}.csv", index=False)
+    pd.DataFrame(
+        [{"start_sec": round(s / fps, 2), "end_sec": round(e / fps, 2)}
+         for s, e in actual_processed_windows],
+        columns=["start_sec", "end_sec"],
+    ).to_csv(f"results/vision/windows/{vbase}.csv", index=False)
+    print(f"Vision: {len(vision_goal_events)} goal events, "
+          f"{len(actual_processed_windows)} windows → results/vision/")
 
     try:
         from moviepy import VideoFileClip, AudioFileClip, concatenate_audioclips

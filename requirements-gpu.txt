@@ -1,0 +1,13 @@
+# GPU / model dependencies (Colab Pro or Apple Silicon).
+# The base audio-only deps remain in requirements.txt.
+torch
+torchaudio
+transformers>=5.5
+accelerate
+opencv-contrib-python      # TrackerCSRT lives in contrib (process_video.py)
+moviepy
+librosa
+soundfile
+pandas
+numpy
+scikit-learn
