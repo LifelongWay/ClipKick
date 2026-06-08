@@ -7,6 +7,7 @@ Run from project root:
     python run_pipeline.py --video match.mp4 --audio data/raw/audio/<match>.mp3 --output out.mp4
     python run_pipeline.py --video ... --audio ... --output ... --fusion E --skip-vision
 """
+
 import argparse
 import os
 import subprocess
@@ -33,32 +34,28 @@ def main():
     parser.add_argument("--skip-vision", action="store_true")
     args = parser.parse_args()
 
-    # Extract the base file name (e.g., 2025_26_LaLiga_Betis_vs_FC_Barcelona_MD15)
     base = os.path.splitext(os.path.basename(args.audio))[0]
-
-    # Define expected output file paths
-    audio_events_csv = f"results/audio/events/{base}.csv"
-    speech_events_csv = f"results/speech/events/{base}.csv"
-
-    print(f"\n--- Initializing Pipeline for: {base} ---")
+    events_csv = f"results/audio/events/{base}.csv"
 
     # 1. Audio energy layer (whole match) — proposes candidate windows.
-    if os.path.exists(audio_events_csv):
-        print(f"› [CACHED] Skipping Audio Layer. Found existing output: {audio_events_csv}")
-    else:
-        run(["python", "src/audio/audio_layer.py"])
+    run(["python", "src/audio/audio_layer.py"])
 
-    # 2. Speech layer (F1) — Granite keyword/excitement signals.
-    if os.path.exists(speech_events_csv):
-        print(f"› [CACHED] Skipping Speech Layer. Found existing output: {speech_events_csv}")
-    else:
-        run(["python", "src/speech/speech_layer.py", "--audio", args.audio, "--mode", args.speech_mode])
+    # Model E is self-contained: it drives Granite itself in two passes and uses
+    # neither the F1 speech CSV nor the F2 timeline nor vision. Skip those stages.
+    if args.fusion == "E":
+        run(["python", FUSION_SCRIPT["E"], "--match", base, "--audio", args.audio])
+        print(f"Highlights → results/fusion/highlights/{base}.csv "
+              f"(+ {base}_preliminary.csv from Pass 1)")
+        return
+
+    # 2. Speech layer (F1) — Granite keyword/excitement signals (for A/B).
+    run(["python", "src/speech/speech_layer.py", "--audio", args.audio, "--mode", args.speech_mode])
 
     # 3. Vision (gated to audio windows) — optional/expensive.
     if not args.skip_vision:
         run(["python", "src/video/process_video.py",
              "--input", args.video, "--audio", args.audio,
-             "--output", args.output, "--events", audio_events_csv])
+             "--output", args.output, "--events", events_csv])
 
     # 4. Shared timeline (F2).
     run(["python", "src/fusion/timeline.py", "--match", base])

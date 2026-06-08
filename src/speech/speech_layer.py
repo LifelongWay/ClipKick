@@ -69,6 +69,37 @@ def gated_windows(match_id):
     return [(max(0.0, float(t) - GATE_PRE), float(t) + GATE_POST) for t in df["time_sec"]]
 
 
+def iter_window_transcripts(y, sr, windows, transcriber):
+    """Yield (w0, w1, text, conf) for each non-silent window that transcribes."""
+    for w0, w1 in windows:
+        a, b = int(w0 * sr), int(w1 * sr)
+        chunk = y[a:b]
+        if len(chunk) < sr or np.max(np.abs(chunk)) < SILENCE_THRESH:
+            continue
+        text, conf = transcriber.transcribe(chunk)
+        if text:
+            yield w0, w1, text, conf
+
+
+def windows_to_events(y, sr, windows, transcriber, compiled):
+    """Transcribe an arbitrary list of (w0, w1) windows → list of keyword-hit dicts.
+
+    Returned dicts use 'time'/'end' keys (the fusion convention), so this is the
+    shared entry point for Model E's two-pass scheme.
+    """
+    events = []
+    for w0, w1, text, conf in iter_window_transcripts(y, sr, windows, transcriber):
+        e = excitement_score(text)
+        w_rate = len(text.split()) / max(1.0, (w1 - w0))
+        for etype, kw in match_events(text.lower(), compiled).items():
+            events.append({
+                "time": round(w0, 3), "end": round(w1, 3), "type": etype,
+                "keyword": kw, "confidence": conf,
+                "excitement": round(e, 4), "word_rate": round(w_rate, 3),
+            })
+    return events
+
+
 def run_speech(audio_path, transcriber, compiled, mode="sliding"):
     match_id = os.path.splitext(os.path.basename(audio_path))[0]
     print(f"[{match_id}] loading audio…")
@@ -90,16 +121,7 @@ def run_speech(audio_path, transcriber, compiled, mode="sliding"):
     conf_arr = np.zeros(n_frames)
     events = []
 
-    for i, (w0, w1) in enumerate(wins):
-        a, b = int(w0 * sr), int(w1 * sr)
-        chunk = y[a:b]
-        if len(chunk) < sr or np.max(np.abs(chunk)) < SILENCE_THRESH:
-            continue
-
-        text, conf = transcriber.transcribe(chunk)
-        if not text:
-            continue
-
+    for i, (w0, w1, text, conf) in enumerate(iter_window_transcripts(y, sr, wins, transcriber)):
         e = excitement_score(text)
         w_rate = len(text.split()) / max(1.0, (w1 - w0))
 
