@@ -56,13 +56,24 @@ def _complement_windows(occupied, duration, window_sec, hop_sec):
     return out
 
 
+PAD = 2.0  # small symmetric pad around the transcription window (seconds)
+
+
 def _mk(ev, near):
-    """Speech-event dict → highlight dict. Pass-1 events get a small agreement bonus."""
-    start, end = common.clip_window(ev["time"])
+    """Speech-event dict → highlight dict. Pass-1 events get a small agreement bonus.
+
+    The clip IS the transcription window [time, end] (±PAD). Granite heard the
+    keyword from exactly that audio, so the event is guaranteed to fall inside
+    [start, end] — unlike clip_window(), which re-anchored on the window start and
+    could end before the event. NMS is anchored on the window center for both passes.
+    """
+    start = max(0.0, ev["time"] - PAD)
+    end = ev["end"] + PAD
+    center = (ev["time"] + ev["end"]) / 2.0
     return {"start": round(start, 2), "end": round(end, 2),
             "event_type": ev["type"],
             "score": round(min(1.0, ev["confidence"] + (0.1 if near else 0.0)), 4),
-            "_t": ev["time"]}
+            "_t": center}
 
 
 def run_match(match_id, audio_path, write=True):
