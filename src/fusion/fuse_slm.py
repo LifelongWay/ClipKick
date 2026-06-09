@@ -105,7 +105,8 @@ class SLMExtractor:
         "You are a football match highlight detector. You read commentary lines, each prefixed "
         "with its time in seconds like [123]. Tag a moment ONLY if the commentary describes the "
         "event happening LIVE at that instant: a goal being scored, a penalty awarded, a card "
-        "shown, or a save / shot off the woodwork. Do NOT tag retrospective mentions, replays, "
+        "shown (a booking / caution), or a notable save or a shot that hits the woodwork (the post "
+        "or crossbar). Do NOT tag retrospective mentions, replays, "
         "statistics, build-up, or talk about earlier events (e.g. 'that was his second goal'). "
         "A goal counts even when stated plainly ('it's one-nil', 'in the back of the net', "
         "'he makes it two'), not only when shouted as 'GOAL!'. "
@@ -117,17 +118,21 @@ class SLMExtractor:
         '{"time": <int>, "type": "goal|penalty|card|save", "confidence": <float>} and nothing '
         "else. If nothing is happening live, reply [].")
 
+    # Generic, match-agnostic examples (no real team/player names) so the prompt
+    # generalises to ANY match and there is no leakage into the benchmark.
     FEWSHOT_USER = (
-        "[40] and that's Ronaldo's second goal of the tournament, remember\n"        # retrospective goal
-        "[60] he shoots — SAVED, a brilliant stop by the keeper!\n"                  # live save (clear)
-        "[95] long ball forward, headed clear\n"                                     # nothing
-        "[120] GOAL! he smashes it into the top corner\n"                            # live goal (loud)
-        "[135] de gea goes the wrong way and it's in, one-nil portugal\n"            # live goal (subtle, no 'GOAL!')
-        "[150] he goes down in the area and the referee points to the spot, penalty\n"  # live penalty (clear)
-        "[175] he should have been booked for that one earlier, you'd think\n"       # retrospective card
-        "[200] the referee shows him a yellow card for the late challenge\n"         # live card
-        "[230] a penalty appeal as he tumbles, the referee is taking another look")  # uncertain penalty
+        "[40] and that was a well-taken goal earlier in the half, you'll remember\n"     # retrospective goal
+        "[60] he strikes it — and what a save, the keeper gets a strong hand to it!\n"   # live save (keeper)
+        "[80] he gets it onto the bar — it rattles the crossbar and stays out!\n"        # live save (woodwork)
+        "[95] the ball is floated into the box and headed clear\n"                       # nothing
+        "[120] GOAL! he fires it into the roof of the net\n"                             # live goal (loud)
+        "[135] the keeper goes the wrong way and it's in, one-nil to the home side\n"    # live goal (subtle, no 'GOAL!')
+        "[150] he's brought down in the box and the referee points to the spot, penalty\n"  # live penalty (clear)
+        "[175] he was lucky not to be booked for that one earlier\n"                     # retrospective card
+        "[200] the referee shows a yellow card, he's booked for the late challenge\n"    # live card (explicit + 'booked')
+        "[230] penalty appeals as he goes down in the area, the referee is checking")    # uncertain penalty
     FEWSHOT_ASSISTANT = ('[{"time": 60, "type": "save", "confidence": 0.9}, '
+                         '{"time": 80, "type": "save", "confidence": 0.88}, '
                          '{"time": 120, "type": "goal", "confidence": 0.96}, '
                          '{"time": 135, "type": "goal", "confidence": 0.85}, '
                          '{"time": 150, "type": "penalty", "confidence": 0.92}, '

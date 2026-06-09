@@ -1,13 +1,18 @@
 {
   "match_id": "2025_26_LaLiga_Betis_vs_FC_Barcelona_MD15",
   "events": [
-    {"start": 4259, "end": 4260, "type": "goal"},
-    {"start": 2703, "end": 2705, "type": "goal"},
-    {"start": 2204, "end": 2219, "type": "goal"},
-    {"start": 988, "end": 990, "type": "goal"},
-    {"start": 676, "end": 680, "type": "goal"},
-    {"start": 1100, "end": 1104, "type": "goal"},
-    {"start": 5803, "end": 5806, "type": "goal"},
-    {"start": 6150, "end": 6151, "type": "goal"}
+    {"start": 670,  "end": 700,  "type": "goal",    "source": "report", "note": "Antony 1-0 Betis (6')"},
+    {"start": 1020, "end": 1060, "type": "goal",    "source": "report", "note": "Ferran Torres 1-1 (11')"},
+    {"start": 1100, "end": 1140, "type": "goal",    "source": "report", "note": "Ferran Torres 2-1 Barcelona (13')"},
+    {"start": 1590, "end": 1620, "type": "card",    "source": "report", "note": "Yellow card - Altimira (Betis, ~27')"},
+    {"start": 2200, "end": 2240, "type": "goal",    "source": "report", "note": "Roony Bardghji 3-1 Barcelona (31')"},
+    {"start": 2710, "end": 2760, "type": "goal",    "source": "report", "note": "Ferran Torres hat-trick 4-1 Barcelona (40')"},
+    {"start": 3600, "end": 3630, "type": "card",    "source": "report", "note": "Yellow card - Gerard Martinez (Betis, ~60')"},
+    {"start": 4080, "end": 4140, "type": "penalty", "source": "report", "note": "Penalty awarded to Barcelona after VAR handball (~59')"},
+    {"start": 4300, "end": 4330, "type": "goal",    "source": "report", "note": "Lamine Yamal penalty 5-1 Barcelona (59')"},
+    {"start": 4730, "end": 4760, "type": "card",    "source": "report", "note": "Yellow card - Juan Garcia (Betis, ~79')"},
+    {"start": 5810, "end": 5850, "type": "goal",    "source": "report", "note": "Diego Llorente 2-5 Betis (85')"},
+    {"start": 6130, "end": 6160, "type": "penalty", "source": "report", "note": "Penalty awarded to Betis - foul by Kounde (~90'+)"},
+    {"start": 6150, "end": 6190, "type": "goal",    "source": "report", "note": "Cucho Hernandez penalty 3-5 Betis (90'+)"}
   ]
 }

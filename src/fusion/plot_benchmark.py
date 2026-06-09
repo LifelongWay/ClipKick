@@ -101,6 +101,53 @@ def plot_runtime(overall):
     _save(fig, "runtime_by_slm.png")
 
 
+def plot_confusion_matrices(conf_dir="results/benchmark/confusion"):
+    """One heatmap per method from results/benchmark/confusion/<method>.csv."""
+    if not os.path.isdir(conf_dir):
+        return
+    for fname in sorted(os.listdir(conf_dir)):
+        if not fname.endswith(".csv"):
+            continue
+        method = fname[:-4]
+        df = pd.read_csv(os.path.join(conf_dir, fname), index_col=0)
+        mat = df.values.astype(float)
+        fig, ax = plt.subplots(figsize=(1.3 * df.shape[1] + 2, 1.3 * df.shape[0] + 1.5))
+        im = ax.imshow(mat, cmap="Blues")
+        ax.set_xticks(range(df.shape[1])); ax.set_xticklabels(df.columns, rotation=30, ha="right")
+        ax.set_yticks(range(df.shape[0])); ax.set_yticklabels(df.index)
+        ax.set_xlabel("predicted"); ax.set_ylabel("true")
+        ax.set_title(f"Confusion — {method}")
+        thr = mat.max() / 2 if mat.max() else 0.5
+        for i in range(df.shape[0]):
+            for j in range(df.shape[1]):
+                v = int(mat[i, j])
+                ax.text(j, i, v, ha="center", va="center",
+                        color="white" if mat[i, j] > thr else "black")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        _save(fig, f"confusion_{method}.png")
+
+
+def plot_a_vs_best_f(overall):
+    """Headline bar: Model A vs the best-F SLM (by F1), if both present."""
+    if "model_A" not in set(overall["slm"]):
+        return
+    f_rows = overall[overall["slm"] != "model_A"]
+    if f_rows.empty:
+        return
+    best_f = f_rows.sort_values("f1", ascending=False).iloc[0]
+    a = overall[overall["slm"] == "model_A"].iloc[0]
+    labels = [f"Model A\n(keyword)", f"Model F\n({best_f['slm']})"]
+    metrics = ["precision", "recall", "f1"]
+    x = np.arange(len(metrics)); w = 0.35
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.bar(x - w / 2, [a[m] for m in metrics], w, label=labels[0])
+    ax.bar(x + w / 2, [best_f[m] for m in metrics], w, label=labels[1])
+    ax.set_xticks(x); ax.set_xticklabels([m.capitalize() for m in metrics])
+    ax.set_ylim(0, 1); ax.set_title("Headline: Model A vs best Model F")
+    ax.legend(); ax.grid(axis="y", alpha=0.3)
+    _save(fig, "headline_A_vs_bestF.png")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Plot SLM benchmark results")
     parser.add_argument("--results", default="results/benchmark/results.csv")
@@ -126,6 +173,8 @@ def main():
     plot_f1_by_type(results)
     plot_npred_vs_truth(overall)
     plot_runtime(overall)
+    plot_a_vs_best_f(overall)
+    plot_confusion_matrices()
     print(f"\nplots → {PLOTS_DIR}/")
 
 

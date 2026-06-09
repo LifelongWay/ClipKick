@@ -23,9 +23,9 @@ import time
 import pandas as pd
 
 try:
-    from . import common, evaluate, fuse_slm, timeline
+    from . import common, evaluate, fuse_slm, fuse_decision, timeline
 except ImportError:
-    import common, evaluate, fuse_slm, timeline
+    import common, evaluate, fuse_slm, fuse_decision, timeline
 
 DEFAULT_MODELS = [
     # small → large, so cheap results land first and a big-model OOM costs least
@@ -39,6 +39,7 @@ DEFAULT_MODELS = [
 ]
 
 OUT_DIR = "results/benchmark"
+CONF_DIR = os.path.join(OUT_DIR, "confusion")
 
 
 def _audio_for(match_id):
@@ -73,25 +74,62 @@ def _rows_from_report(slm, match_id, report, runtime):
     return rows
 
 
-def run(models, matches):
+def _failed_row(method, mid, scope="failed"):
+    return {"slm": method, "match": mid, "scope": scope, "precision": "", "recall": "",
+            "f1": "", "tp": "", "fp": "", "fn": "", "n_pred": "", "n_truth": "", "runtime_sec": ""}
+
+
+def _score_match(method, mid, hl, runtime, all_rows, conf_acc):
+    """Evaluate one method's highlights on one match: P/R/F1 rows + confusion accumulation."""
+    report = evaluate.evaluate(hl, mid, verbose=True)
+    all_rows.extend(_rows_from_report(method, mid, report, runtime))
+    conf = evaluate.confusion_counts(hl, common.load_truth(mid))
+    conf_acc[method] = evaluate.add_confusion(conf_acc.get(method), conf)
+
+
+def run(models, matches, with_model_a=False):
     os.makedirs(OUT_DIR, exist_ok=True)
+    os.makedirs(CONF_DIR, exist_ok=True)
     # Build every transcript once up-front (Granite), so the model loop is GPU-light.
     for mid in matches:
         audio = _audio_for(mid)
         if audio:
             fuse_slm.build_or_load_transcript(mid, audio)
 
-    all_rows = []
+    all_rows, conf_acc = [], {}
+
+    def persist():
+        pd.DataFrame(all_rows).to_csv(os.path.join(OUT_DIR, "results.csv"), index=False)
+
+    # ── Model A (audio + speech keywords, no vision) — rule-based, no GPU model ──
+    if with_model_a:
+        method = "model_A"
+        print(f"\n========== METHOD: {method} (audio + speech keywords, no vision) ==========")
+        for mid in matches:
+            try:
+                t0 = time.perf_counter()
+                hl = fuse_decision.run_match(mid, write=False)   # reads F2 features + candidates
+                runtime = time.perf_counter() - t0
+                common.write_highlights(mid, hl, suffix="__" + method)
+                _score_match(method, mid, hl, runtime, all_rows, conf_acc)
+            except Exception as e:
+                print(f"[{mid}] {method} FAILED: {type(e).__name__}: {e} "
+                      f"(did you run audio_layer + speech_layer --from-transcript + timeline?)")
+                all_rows.append(_failed_row(method, mid))
+            persist()
+        if method in conf_acc:
+            evaluate.save_confusion(conf_acc[method], os.path.join(CONF_DIR, method + ".csv"))
+
+    # ── Model F across SLMs ──
     for model_id in models:
         tag = fuse_slm.model_tag(model_id)
-        print(f"\n========== SLM: {model_id} ({tag}) ==========")
+        print(f"\n========== METHOD: {tag} (Model F / SLM) ==========")
         try:
             slm = fuse_slm.SLMExtractor(model_id)
         except Exception as e:
             print(f"[SKIP] could not load {model_id}: {e}")
-            all_rows.append({"slm": tag, "match": "*", "scope": "skipped",
-                             "precision": "", "recall": "", "f1": "", "tp": "", "fp": "",
-                             "fn": "", "n_pred": "", "n_truth": "", "runtime_sec": ""})
+            all_rows.append(_failed_row(tag, "*", scope="skipped"))
+            persist()
             continue
 
         for mid in matches:
@@ -103,26 +141,22 @@ def run(models, matches):
                 t0 = time.perf_counter()
                 hl = fuse_slm.run_match(mid, audio, model_id=model_id, slm=slm, tag=tag)
                 runtime = time.perf_counter() - t0
-                report = evaluate.evaluate(hl, mid, verbose=True)
-                all_rows.extend(_rows_from_report(tag, mid, report, runtime))
+                _score_match(tag, mid, hl, runtime, all_rows, conf_acc)
             except Exception as e:  # one match failing must not lose the whole benchmark
                 print(f"[{mid}] {tag} FAILED: {type(e).__name__}: {e}")
-                all_rows.append({"slm": tag, "match": mid, "scope": "failed",
-                                 "precision": "", "recall": "", "f1": "", "tp": "", "fp": "",
-                                 "fn": "", "n_pred": "", "n_truth": "", "runtime_sec": ""})
-            # persist after every match so a later crash never wipes earlier results
-            pd.DataFrame(all_rows).to_csv(os.path.join(OUT_DIR, "results.csv"), index=False)
+                all_rows.append(_failed_row(tag, mid))
+            persist()  # after every match so a later crash never wipes earlier results
 
+        if tag in conf_acc:
+            evaluate.save_confusion(conf_acc[tag], os.path.join(CONF_DIR, tag + ".csv"))
         try:
             slm.close()  # free GPU before the next model
         except Exception:
             pass
 
     results = pd.DataFrame(all_rows)
-    results_path = os.path.join(OUT_DIR, "results.csv")
-    results.to_csv(results_path, index=False)
-    print(f"\nwrote {results_path}")
-
+    results.to_csv(os.path.join(OUT_DIR, "results.csv"), index=False)
+    print(f"\nwrote {os.path.join(OUT_DIR, 'results.csv')} + confusion/*.csv")
     _write_summary(results)
     return results
 
@@ -160,6 +194,8 @@ def main():
     parser = argparse.ArgumentParser(description="Benchmark SLMs on Model F")
     parser.add_argument("--models", default=None, help="comma-separated HF ids (default: built-in set)")
     parser.add_argument("--matches", default=None, help="comma-separated match ids (default: all)")
+    parser.add_argument("--with-model-a", action="store_true",
+                        help="also benchmark Model A (needs audio_layer + speech_layer + timeline first)")
     args = parser.parse_args()
 
     models = args.models.split(",") if args.models else DEFAULT_MODELS
@@ -168,8 +204,8 @@ def main():
         print("no matches found (need data/raw/audio/<id>.mp3, a cached transcript, "
               "or results/audio/rms) — or pass --matches <id>")
         return
-    print(f"Models: {models}\nMatches: {matches}")
-    run(models, matches)
+    print(f"Methods: {'model_A + ' if args.with_model_a else ''}{models}\nMatches: {matches}")
+    run(models, matches, with_model_a=args.with_model_a)
 
 
 if __name__ == "__main__":

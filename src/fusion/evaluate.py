@@ -64,6 +64,62 @@ def evaluate(preds, match_id, ann_dir=common.ANN_DIR, verbose=True):
     return report
 
 
+MISSED = "(missed)"          # a ground-truth event no prediction matched
+FALSE_ALARM = "(false_alarm)"  # a prediction matching no ground-truth event
+
+
+def confusion_counts(preds, truth, pre=common.MATCH_PRE, post=common.MATCH_POST):
+    """Type confusion via TIME-based (type-agnostic) greedy matching.
+
+    Returns nested dict counts[true_label][pred_label] where labels are the event
+    types plus a `(missed)` predicted-label (GT with no prediction) and a
+    `(false_alarm)` true-label (prediction with no GT). The diagonal of the
+    type-by-type block = detected with the correct type.
+    """
+    labels = common.EVENT_TYPES
+    counts = {t: {p: 0 for p in labels + [MISSED]} for t in labels + [FALSE_ALARM]}
+
+    used = [False] * len(preds)
+    for g in sorted(truth, key=lambda x: x["start"]):
+        best, best_dt = None, 1e9
+        for i, p in enumerate(preds):
+            if used[i]:
+                continue
+            lo = p["start"] - pre
+            hi = p.get("end", p["start"]) + post
+            if lo <= g["start"] <= hi and abs(p["start"] - g["start"]) < best_dt:
+                best, best_dt = i, abs(p["start"] - g["start"])
+        if best is None:
+            counts[g["type"]][MISSED] += 1                       # missed
+        else:
+            used[best] = True
+            counts[g["type"]][preds[best]["event_type"]] += 1     # matched (maybe wrong type)
+    for i, p in enumerate(preds):
+        if not used[i]:
+            counts[FALSE_ALARM][p["event_type"]] += 1             # spurious prediction
+    return counts
+
+
+def save_confusion(counts, path):
+    import pandas as pd
+    rows = common.EVENT_TYPES + [FALSE_ALARM]
+    cols = common.EVENT_TYPES + [MISSED]
+    df = pd.DataFrame([[counts[r][c] for c in cols] for r in rows], index=rows, columns=cols)
+    df.index.name = "true\\pred"
+    df.to_csv(path)
+    return df
+
+
+def add_confusion(acc, counts):
+    """Accumulate one match's confusion `counts` into `acc` (same nested structure)."""
+    if acc is None:
+        return {t: dict(row) for t, row in counts.items()}
+    for t, row in counts.items():
+        for p, n in row.items():
+            acc[t][p] += n
+    return acc
+
+
 def evaluate_csv(pred_csv, match_id=None, ann_dir=common.ANN_DIR, verbose=True):
     if match_id is None:
         match_id = os.path.splitext(os.path.basename(pred_csv))[0]

@@ -1,9 +1,15 @@
 {
   "match_id": "2014_15_LaLiga_FC_Barcelona_vs_Atletico_Madrid",
   "events": [
-    {"start": 1004, "end": 1006, "type": "goal"}, 
-    {"start": 2400, "end": 2402, "type": "goal"},
-    {"start": 3928, "end": 3929, "type": "goal"},
-    {"start": 5728, "end": 5730, "type": "goal"}
+    {"start": 1020, "end": 1060, "type": "goal",    "source": "report", "note": "Neymar, 1-0 Barcelona (12')"},
+    {"start": 1770, "end": 1800, "type": "card",    "source": "report", "note": "Yellow card - Atletico player (29')"},
+    {"start": 2280, "end": 2310, "type": "card",    "source": "report", "note": "Yellow card - Mandzukic (38')"},
+    {"start": 2400, "end": 2430, "type": "goal",    "source": "report", "note": "Suarez, 2-0 Barcelona (33')"},
+    {"start": 3860, "end": 3900, "type": "penalty", "source": "report", "note": "Penalty awarded to Atletico - Gomez fouled (64')"},
+    {"start": 3910, "end": 3940, "type": "goal",    "source": "report", "note": "Mandzukic penalty, 2-1 (65')"},
+    {"start": 3990, "end": 4020, "type": "card",    "source": "report", "note": "Yellow card - Suarez dissent (66')"},
+    {"start": 5310, "end": 5340, "type": "card",    "source": "report", "note": "Yellow card - Messi (88')"},
+    {"start": 5430, "end": 5460, "type": "card",    "source": "report", "note": "Yellow card - Godin (90')"},
+    {"start": 5700, "end": 5740, "type": "goal",    "source": "report", "note": "Messi, 3-1 Barcelona (87')"}
   ]
 }

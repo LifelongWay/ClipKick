@@ -199,6 +199,7 @@ python src/fusion/export_clips.py --highlights results/fusion/highlights/<id>__<
 |---|---|
 | `--audio` (req) | match mp3 to transcribe |
 | `--mode {sliding,gated}` | whole match vs only audio-event windows |
+| `--from-transcript` | reuse the **cached Granite transcript** (no Granite/GPU) — so Model A uses the same transcript as Model F |
 | `--fp32` | force float32 (MPS safety) |
 
 ### `src/fusion/timeline.py` — F2 (shared feature grid)
@@ -244,6 +245,7 @@ python src/fusion/export_clips.py --highlights results/fusion/highlights/<id>__<
 |---|---|
 | `--models` | comma-separated HF model ids to compare (default: the built-in 7) |
 | `--matches` | comma-separated match ids (default: all discoverable) |
+| `--with-model-a` | also benchmark **Model A** alongside the SLMs (needs audio_layer + speech_layer + timeline first) |
 
 ### `src/fusion/plot_benchmark.py` — graphs
 | Flag | What it's for |

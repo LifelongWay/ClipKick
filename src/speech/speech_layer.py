@@ -40,6 +40,11 @@ warnings.filterwarnings("ignore")
 EVENTS_DIR = "results/speech/events"
 SCORE_DIR  = "results/speech/score"
 AUDIO_EVENTS_DIR = "results/audio/events"
+TRANSCRIPT_DIR = "results/speech/transcript"
+
+# Event confidence when derived from the cached transcript (keyword certain, but no
+# Granite token-probability available in the text-only cache).
+FROM_TRANSCRIPT_CONF = 0.9
 
 # Gated-mode window around each audio event (asymmetric: commentary lags the moment).
 GATE_PRE  = 5
@@ -148,6 +153,40 @@ def run_speech(audio_path, transcriber, compiled, mode="sliding"):
     return events
 
 
+def run_from_transcript(audio_path, compiled):
+    """F1 without Granite: reuse the cached transcript (results/speech/transcript/<id>.csv)
+    and run the same keyword/excitement logic on its text. Lets Model A consume the SAME
+    transcript as Model F (fair, controlled comparison) and avoids a second Granite pass."""
+    match_id = os.path.splitext(os.path.basename(audio_path))[0]
+    path = os.path.join(TRANSCRIPT_DIR, match_id + ".csv")
+    if not os.path.exists(path):
+        print(f"[{match_id}] no cached transcript at {path} — run fuse_slm.py --transcript-only first")
+        return []
+    df = pd.read_csv(path).fillna("")
+    print(f"[{match_id}] F1 from cached transcript ({len(df)} segments)")
+
+    n_frames = int(np.ceil(float(df["end_sec"].max()))) + 1 if len(df) else 1
+    exc = np.zeros(n_frames); wr = np.zeros(n_frames); conf_arr = np.zeros(n_frames)
+    events = []
+    for r in df.itertuples():
+        w0, w1, text = float(r.start_sec), float(r.end_sec), str(r.text)
+        if not text.strip():
+            continue
+        e = excitement_score(text)
+        w_rate = len(text.split()) / max(1.0, (w1 - w0))
+        lo, hi = int(w0), min(n_frames, int(w1))
+        exc[lo:hi] = np.maximum(exc[lo:hi], e)
+        wr[lo:hi] = np.maximum(wr[lo:hi], w_rate)
+        for etype, kw in match_events(text.lower(), compiled).items():
+            events.append({
+                "time_sec": round(w0, 3), "end_sec": round(w1, 3), "type": etype,
+                "keyword": kw, "confidence": FROM_TRANSCRIPT_CONF,
+                "excitement": round(e, 4), "word_rate": round(w_rate, 3),
+            })
+    _write(match_id, events, exc, wr, conf_arr, n_frames)
+    return events
+
+
 def _write(match_id, events, exc, wr, conf_arr, n_frames):
     os.makedirs(EVENTS_DIR, exist_ok=True)
     os.makedirs(SCORE_DIR, exist_ok=True)
@@ -170,16 +209,22 @@ def main():
     parser = argparse.ArgumentParser(description="F1 — Granite speech layer")
     parser.add_argument("--audio", required=True, help="path to a match audio file")
     parser.add_argument("--mode", choices=["sliding", "gated"], default="sliding")
+    parser.add_argument("--from-transcript", action="store_true",
+                        help="reuse the cached Granite transcript instead of re-running Granite")
     parser.add_argument("--fp32", action="store_true")
     args = parser.parse_args()
+
+    compiled = compile_lexicon(LEXICON)
+
+    if args.from_transcript:
+        run_from_transcript(args.audio, compiled)   # no Granite / GPU needed
+        return
 
     device, dtype = pick_device()
     if args.fp32:
         dtype = torch.float32
     print(f"Device: {device} | dtype: {dtype}")
-
     transcriber = GraniteTranscriber(MODEL_ID, device, dtype)
-    compiled = compile_lexicon(LEXICON)
     run_speech(args.audio, transcriber, compiled, mode=args.mode)
 
 
