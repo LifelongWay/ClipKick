@@ -38,7 +38,10 @@ def score_candidate(c, features, w):
         denom = wa + ws
         s = (wa * audio + ws * speech) / denom if denom else 0.0
 
-    etype = c["speech_type"] or ("goal" if (vision_ok and float(row.get("vision_goal", 0)) >= 0.5) else "event")
+    # Type from the speech keyword if present; otherwise an audio-energy peak with no
+    # keyword is, in football, almost always a goal (crowd roar) → default "goal"
+    # (a valid type, so it can be scored and never produces an untypeable event).
+    etype = c["speech_type"] or "goal"
     return s, etype
 
 
@@ -51,7 +54,9 @@ def run_match(match_id, w=DEFAULT_W, threshold=DEFAULT_T, write=True):
             start, end = common.clip_window(c["time"])
             highlights.append({"start": round(start, 2), "end": round(end, 2),
                                "event_type": etype, "score": round(s, 4)})
-    highlights = common.temporal_nms(highlights)
+    # Same-type suppression so a real penalty + goal seconds apart both survive
+    # (cross-type NMS would wrongly drop one).
+    highlights = common.temporal_nms(highlights, type_aware=True)
     if write:
         common.write_highlights(match_id, highlights)
     return highlights

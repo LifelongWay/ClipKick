@@ -93,9 +93,10 @@ def confusion_counts(preds, truth, pre=common.MATCH_PRE, post=common.MATCH_POST)
             counts[g["type"]][MISSED] += 1                       # missed
         else:
             used[best] = True
-            counts[g["type"]][preds[best]["event_type"]] += 1     # matched (maybe wrong type)
+            pt = preds[best]["event_type"]
+            counts[g["type"]][pt if pt in labels else MISSED] += 1  # matched (maybe wrong/unknown type)
     for i, p in enumerate(preds):
-        if not used[i]:
+        if not used[i] and p["event_type"] in labels:
             counts[FALSE_ALARM][p["event_type"]] += 1             # spurious prediction
     return counts
 
