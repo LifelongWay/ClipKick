@@ -38,7 +38,7 @@ DEFAULT_CONF = 0.5      # used when the model omits confidence (or regex fallbac
 AGREE_BONUS = 0.05     # small boost when the same moment is flagged in >1 chunk
 SLM_NMS_GAP = 60.0     # same-type suppression window (collapses repeated mentions)
 SLM_MIN_CONF = 0.0     # default keeps all (preserves recall); raise to trade for precision
-MAX_NEW_TOKENS = 256
+MAX_NEW_TOKENS = 512   # headroom so a chunk with several events isn't truncated mid-JSON
 
 
 def _add_speech_path():
@@ -197,6 +197,7 @@ class SLMExtractor:
 
 # ── Defensive parsing of SLM output ───────────────────────────────────────────
 _TYPES = set(common.EVENT_TYPES)
+_OBJ = re.compile(r"\{[^{}]*\}")  # one flat JSON object (our schema has no nesting)
 _FALLBACK = re.compile(r"(\d+)\D{0,20}?(goal|penalty|card|save)", re.IGNORECASE)
 
 
@@ -208,19 +209,29 @@ def _clamp_conf(c):
 
 
 def parse_slm_output(text):
-    """Return list of {time:int, type:str, confidence:float}. JSON first, then regex."""
+    """Return list of {time:int, type:str, confidence:float}.
+
+    Parses each ``{...}`` object independently rather than relying on the outer
+    ``[...]`` brackets, so prose around the JSON, echoed input timestamps, multiple
+    arrays, or a truncated array (token limit cut the closing ``]``) don't wipe out
+    the per-event confidence. Falls back to a loose regex only if nothing parses."""
     hits = []
-    m = re.search(r"\[.*\]", text, re.DOTALL)
-    if m:
+    for block in _OBJ.findall(text):
         try:
-            for obj in json.loads(m.group(0)):
-                t, ty = obj.get("time"), str(obj.get("type", "")).lower()
-                if ty in _TYPES and t is not None:
-                    conf = _clamp_conf(obj.get("confidence")) if "confidence" in obj else DEFAULT_CONF
-                    hits.append({"time": int(float(t)), "type": ty, "confidence": conf})
-        except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
-            pass
-    if not hits:  # regex fallback on malformed output — no confidence available
+            obj = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        ty = str(obj.get("type", "")).lower()
+        t = obj.get("time")
+        if ty not in _TYPES or t is None:
+            continue
+        try:
+            ti = int(float(t))
+        except (TypeError, ValueError):
+            continue
+        conf = _clamp_conf(obj.get("confidence")) if "confidence" in obj else DEFAULT_CONF
+        hits.append({"time": ti, "type": ty, "confidence": conf})
+    if not hits:  # last-ditch regex fallback on non-JSON output — no confidence available
         for t, ty in _FALLBACK.findall(text):
             ty = ty.lower()
             if ty in _TYPES:
@@ -244,6 +255,18 @@ def snap_to_segment(t, segments, window_sec=20.0):
 
 
 # ── Orchestration ─────────────────────────────────────────────────────────────
+def _dedupe_overlap(segments):
+    """Drop overlapping transcript windows so the SLM doesn't read each commentary
+    phrase twice (Granite slides 20s windows at a 10s hop → ~50% repeated text).
+    Greedy non-overlapping selection keeps full temporal coverage."""
+    out, last_end = [], -1.0
+    for seg in segments:
+        if seg[0] >= last_end:
+            out.append(seg)
+            last_end = seg[1]
+    return out
+
+
 def _chunks(segments, size=CHUNK_SEGMENTS, overlap=CHUNK_OVERLAP):
     step = max(1, size - overlap)
     for i in range(0, len(segments), step):
@@ -260,6 +283,9 @@ def run_match(match_id, audio_path, model_id=DEFAULT_SLM, slm=None,
     if not segments:
         print(f"[{match_id}] empty transcript — nothing to do")
         return []
+    # Feed the SLM non-overlapping windows (no repeated commentary). Lines are tagged
+    # with the window CENTER so it matches snap_to_segment's center-based lookup.
+    slm_segments = _dedupe_overlap(segments)
 
     if slm is None:
         device, dtype = pick_slm_device()
@@ -269,12 +295,12 @@ def run_match(match_id, audio_path, model_id=DEFAULT_SLM, slm=None,
 
     # tally per (rounded) anchor time; keep the MAX confidence seen across chunks
     agree, typed = {}, {}
-    for chunk in _chunks(segments):
-        chunk_text = "\n".join(f"[{int(s0)}] {txt}" for s0, s1, txt in chunk if txt.strip())
+    for chunk in _chunks(slm_segments):
+        chunk_text = "\n".join(f"[{int((s0 + s1) / 2)}] {txt}" for s0, s1, txt in chunk if txt.strip())
         if not chunk_text:
             continue
         for hit in parse_slm_output(slm.extract(chunk_text)):
-            seg = snap_to_segment(hit["time"], segments)
+            seg = snap_to_segment(hit["time"], slm_segments)
             if seg is None:
                 continue  # hallucinated time
             key = round((seg[0] + seg[1]) / 2.0)
