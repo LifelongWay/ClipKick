@@ -105,9 +105,13 @@ class SLMExtractor:
         "You are a football match highlight detector. You read commentary lines, each prefixed "
         "with its time in seconds like [123]. Tag a moment ONLY if the commentary describes the "
         "event happening LIVE at that instant: a goal being scored, a penalty awarded, a card "
-        "shown (a booking / caution), or a notable save or a shot that hits the woodwork (the post "
-        "or crossbar). Do NOT tag retrospective mentions, replays, "
+        "shown (the referee actually produces a yellow or red card now — a booking, caution, second "
+        "yellow, or sending-off), or a notable save or a shot that hits the woodwork (the post or "
+        "crossbar). Do NOT tag retrospective mentions, replays, "
         "statistics, build-up, or talk about earlier events (e.g. 'that was his second goal'). "
+        "In particular do NOT tag card DISCUSSION: a player already 'on a yellow', one who 'escapes "
+        "a booking', 'hasn't been booked', a foul that 'wasn't enough for a yellow', or recalling an "
+        "earlier card — only the instant a card is actually shown. "
         "A goal counts even when stated plainly ('it's one-nil', 'in the back of the net', "
         "'he makes it two'), not only when shouted as 'GOAL!'. "
         "For each live event return its [seconds] tag as time, the type "
@@ -125,6 +129,7 @@ class SLMExtractor:
         "[60] he strikes it — and what a save, the keeper gets a strong hand to it!\n"   # live save (keeper)
         "[80] he gets it onto the bar — it rattles the crossbar and stays out!\n"        # live save (woodwork)
         "[95] the ball is floated into the box and headed clear\n"                       # nothing
+        "[105] he's already on a yellow card, so a second here would be costly\n"        # card DISCUSSION → ignore
         "[120] GOAL! he fires it into the roof of the net\n"                             # live goal (loud)
         "[135] the keeper goes the wrong way and it's in, one-nil to the home side\n"    # live goal (subtle, no 'GOAL!')
         "[150] he's brought down in the box and the referee points to the spot, penalty\n"  # live penalty (clear)

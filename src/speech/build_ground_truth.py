@@ -59,9 +59,10 @@ FALLBACK_CONF  = 0.75        # used when token-probability confidence is unavail
 LEXICON = {
     "goal":    ["goal", "gol", "golazo", "goool", "goaal"],
     "penalty": ["penalty", "penalti", "penal", "pênalti", "spot kick"],
-    "card":    ["yellow card", "red card", "tarjeta", "tarjeta roja",
-                "tarjeta amarilla", "expulsión", "expulsion", "sent off",
-                "booked", "booking"],
+    "card":    ["yellow card", "red card", "straight red", "second yellow",
+                "booked", "booking", "caution", "cautioned", "sent off", "sent-off",
+                "dismissed", "into the book", "shown a card", "shows a card",
+                "tarjeta", "tarjeta roja", "tarjeta amarilla", "expulsión", "expulsion"],
     "save":    ["save", "great save", "what a save", "parada", "paradón",
                 "paradon", "off the post", "hits the bar", "crossbar",
                 "denied", "so close"],
