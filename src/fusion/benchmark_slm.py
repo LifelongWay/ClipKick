@@ -241,7 +241,12 @@ def main():
                         help="verifier SLM for Model G")
     args = parser.parse_args()
 
-    models = args.models.split(",") if args.models else DEFAULT_MODELS
+    if args.models is None:
+        models = DEFAULT_MODELS
+    elif args.models.strip().lower() in ("", "none"):
+        models = []                       # run no Model-F SLMs (e.g. only Model A and/or G)
+    else:
+        models = args.models.split(",")
     matches = args.matches.split(",") if args.matches else _discover_matches()
     if not matches:
         print("no matches found (need data/raw/audio/<id>.mp3, a cached transcript, "
