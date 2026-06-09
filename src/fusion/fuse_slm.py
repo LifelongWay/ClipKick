@@ -365,6 +365,8 @@ def main():
     parser.add_argument("--clips", action="store_true", help="export video clips (needs --video)")
     parser.add_argument("--min-confidence", type=float, default=SLM_MIN_CONF,
                         help="drop detections below this score (precision knob; 0 keeps all)")
+    parser.add_argument("--transcript-only", action="store_true",
+                        help="build/cache the Granite transcript and exit (no SLM stage)")
     args = parser.parse_args()
 
     ids = [args.match] if args.match else timeline._all_match_ids()
@@ -376,6 +378,10 @@ def main():
             audio = os.path.join("data/raw/audio", mid + ".mp3")
         if not os.path.exists(audio):
             print(f"[{mid}] no audio (looked for {audio}) — pass --audio or --video")
+            continue
+
+        if args.transcript_only:
+            build_or_load_transcript(mid, audio, use_cache=not args.no_cache)
             continue
 
         hl = run_match(mid, audio, model_id=args.model, use_cache=not args.no_cache,
