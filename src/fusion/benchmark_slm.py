@@ -23,9 +23,9 @@ import time
 import pandas as pd
 
 try:
-    from . import common, evaluate, fuse_slm, fuse_decision, timeline
+    from . import common, evaluate, fuse_slm, fuse_decision, fuse_hybrid, timeline
 except ImportError:
-    import common, evaluate, fuse_slm, fuse_decision, timeline
+    import common, evaluate, fuse_slm, fuse_decision, fuse_hybrid, timeline
 
 DEFAULT_MODELS = [
     # small → large, so cheap results land first and a big-model OOM costs least
@@ -87,7 +87,8 @@ def _score_match(method, mid, hl, runtime, all_rows, conf_acc):
     conf_acc[method] = evaluate.add_confusion(conf_acc.get(method), conf)
 
 
-def run(models, matches, with_model_a=False):
+def run(models, matches, with_model_a=False, with_model_g=False,
+        g_model="Qwen/Qwen2.5-7B-Instruct"):
     os.makedirs(OUT_DIR, exist_ok=True)
     os.makedirs(CONF_DIR, exist_ok=True)
     # Build every transcript once up-front (Granite), so the model loop is GPU-light.
@@ -121,6 +122,38 @@ def run(models, matches, with_model_a=False):
             persist()
         if method in conf_acc:
             evaluate.save_confusion(conf_acc[method], os.path.join(CONF_DIR, method + ".csv"))
+
+    # ── Model G — SLM-verified cascade (Model A candidates → SLM verifier) ──
+    if with_model_g:
+        method = "g-" + fuse_slm.model_tag(g_model)
+        print(f"\n========== METHOD: {method} (Model G — verify Model A with {g_model}) ==========")
+        try:
+            verifier = fuse_slm.SLMExtractor(g_model)
+        except Exception as e:
+            print(f"[SKIP] could not load verifier {g_model}: {e}")
+            all_rows.append(_failed_row(method, "*", scope="skipped"))
+            persist()
+        else:
+            for mid in matches:
+                audio = _audio_for(mid)
+                if not audio:
+                    print(f"[{mid}] no audio — skip")
+                    continue
+                try:
+                    t0 = time.perf_counter()
+                    hl = fuse_hybrid.run_match(mid, audio, slm=verifier, tag=method)
+                    runtime = time.perf_counter() - t0
+                    _score_match(method, mid, hl, runtime, all_rows, conf_acc)
+                except Exception as e:
+                    print(f"[{mid}] {method} FAILED: {type(e).__name__}: {e}")
+                    all_rows.append(_failed_row(method, mid))
+                persist()
+            if method in conf_acc:
+                evaluate.save_confusion(conf_acc[method], os.path.join(CONF_DIR, method + ".csv"))
+            try:
+                verifier.close()
+            except Exception:
+                pass
 
     # ── Model F across SLMs ──
     for model_id in models:
@@ -202,6 +235,10 @@ def main():
     parser.add_argument("--matches", default=None, help="comma-separated match ids (default: all)")
     parser.add_argument("--with-model-a", action="store_true",
                         help="also benchmark Model A (needs audio_layer + speech_layer + timeline first)")
+    parser.add_argument("--with-model-g", action="store_true",
+                        help="also benchmark Model G (SLM-verified cascade over Model A candidates)")
+    parser.add_argument("--g-model", default="Qwen/Qwen2.5-7B-Instruct",
+                        help="verifier SLM for Model G")
     args = parser.parse_args()
 
     models = args.models.split(",") if args.models else DEFAULT_MODELS
@@ -210,8 +247,11 @@ def main():
         print("no matches found (need data/raw/audio/<id>.mp3, a cached transcript, "
               "or results/audio/rms) — or pass --matches <id>")
         return
-    print(f"Methods: {'model_A + ' if args.with_model_a else ''}{models}\nMatches: {matches}")
-    run(models, matches, with_model_a=args.with_model_a)
+    extra = (("model_A + " if args.with_model_a else "")
+             + (f"model_G({args.g_model}) + " if args.with_model_g else ""))
+    print(f"Methods: {extra}{models}\nMatches: {matches}")
+    run(models, matches, with_model_a=args.with_model_a,
+        with_model_g=args.with_model_g, g_model=args.g_model)
 
 
 if __name__ == "__main__":

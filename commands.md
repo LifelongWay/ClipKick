@@ -88,6 +88,14 @@ python src/audio/audio_layer.py                            # once (for the peaks
 python src/fusion/fuse_progressive.py --match <id> --audio data/raw/audio/<id>.mp3 --eval
 ```
 
+### Model G — SLM-verified cascade (Model A proposes → SLM verifies & types)
+Needs the Model A prereqs (audio_layer + speech_layer `--from-transcript`) + the cached transcript.
+```bash
+python src/fusion/fuse_hybrid.py --match <id> --audio data/raw/audio/<id>.mp3 --eval
+python src/fusion/fuse_hybrid.py --match <id> --model unsloth/Qwen2.5-32B-Instruct-bnb-4bit --eval  # bigger verifier
+python src/fusion/fuse_hybrid.py --match <id> --min-confidence 0.6 --eval                            # precision knob
+```
+
 ### Model F — SLM (self-contained, ONE command) ★
 Builds the Granite transcript on first run (cached), then runs the SLM. **No separate transcribe step.**
 ```bash
@@ -246,6 +254,8 @@ python src/fusion/export_clips.py --highlights results/fusion/highlights/<id>__<
 | `--models` | comma-separated HF model ids to compare (default: the built-in 7) |
 | `--matches` | comma-separated match ids (default: all discoverable) |
 | `--with-model-a` | also benchmark **Model A** alongside the SLMs (needs audio_layer + speech_layer + timeline first) |
+| `--with-model-g` | also benchmark **Model G** (SLM-verified cascade: verify Model A's candidates with an SLM) |
+| `--g-model` | verifier SLM for Model G (default `Qwen/Qwen2.5-7B-Instruct`) |
 
 ### `src/fusion/plot_benchmark.py` — graphs
 | Flag | What it's for |

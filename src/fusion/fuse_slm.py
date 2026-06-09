@@ -167,33 +167,40 @@ class SLMExtractor:
                     model_id, dtype=dtype, trust_remote_code=True).to(device)
             self.device = device
 
-    def _render(self, chunk_text):
-        """Apply the chat template; fall back to merging system into the first user
-        message for templates that reject a 'system' role (e.g. Gemma-2)."""
-        msgs_sys = [
+    def _apply_template(self, messages):
+        """Apply the chat template; fall back to merging a leading system message into
+        the first user message for templates that reject a 'system' role (e.g. Gemma-2)."""
+        try:
+            return self.tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        except Exception:
+            merged, sys_text = [], ""
+            for m in messages:
+                if m["role"] == "system":
+                    sys_text = m["content"]
+                    continue
+                if sys_text and m["role"] == "user":
+                    m = {"role": "user", "content": sys_text + "\n\n" + m["content"]}
+                    sys_text = ""
+                merged.append(m)
+            return self.tok.apply_chat_template(merged, tokenize=False, add_generation_prompt=True)
+
+    def chat(self, messages, max_new_tokens=MAX_NEW_TOKENS):
+        """Generic single-turn completion over a chat `messages` list. Reused by Model G."""
+        import torch
+        prompt = self._apply_template(messages)
+        inputs = self.tok(prompt, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            out = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
+        gen = out[0][inputs["input_ids"].shape[1]:]
+        return self.tok.decode(gen, skip_special_tokens=True)
+
+    def extract(self, chunk_text):
+        return self.chat([
             {"role": "system", "content": self.SYSTEM},
             {"role": "user", "content": self.FEWSHOT_USER},
             {"role": "assistant", "content": self.FEWSHOT_ASSISTANT},
             {"role": "user", "content": chunk_text},
-        ]
-        try:
-            return self.tok.apply_chat_template(msgs_sys, tokenize=False, add_generation_prompt=True)
-        except Exception:
-            msgs_no_sys = [
-                {"role": "user", "content": self.SYSTEM + "\n\n" + self.FEWSHOT_USER},
-                {"role": "assistant", "content": self.FEWSHOT_ASSISTANT},
-                {"role": "user", "content": chunk_text},
-            ]
-            return self.tok.apply_chat_template(msgs_no_sys, tokenize=False, add_generation_prompt=True)
-
-    def extract(self, chunk_text):
-        import torch
-        prompt = self._render(chunk_text)
-        inputs = self.tok(prompt, return_tensors="pt").to(self.device)
-        with torch.no_grad():
-            out = self.model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
-        gen = out[0][inputs["input_ids"].shape[1]:]
-        return self.tok.decode(gen, skip_special_tokens=True)
+        ])
 
     def close(self):
         """Free GPU memory so the benchmark can load the next model."""
