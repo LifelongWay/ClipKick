@@ -99,7 +99,9 @@ def run(models, matches, with_model_a=False):
     all_rows, conf_acc = [], {}
 
     def persist():
-        pd.DataFrame(all_rows).to_csv(os.path.join(OUT_DIR, "results.csv"), index=False)
+        df = pd.DataFrame(all_rows)
+        df.to_csv(os.path.join(OUT_DIR, "results.csv"), index=False)
+        _write_summary(df, verbose=False)   # keep summary.csv current even if interrupted
 
     # ── Model A (audio + speech keywords, no vision) — rule-based, no GPU model ──
     if with_model_a:
@@ -161,11 +163,14 @@ def run(models, matches, with_model_a=False):
     return results
 
 
-def _write_summary(results):
-    """Per-SLM headline: overall P/R/F1 (micro over matches) + means."""
+def _write_summary(results, verbose=True):
+    """Per-method headline: overall P/R/F1 (micro over matches) + means."""
+    if results.empty or "scope" not in results.columns:
+        return
     ov = results[results["scope"] == "overall"].copy()
     if ov.empty:
-        print("no successful runs to summarize")
+        if verbose:
+            print("no successful runs to summarize")
         return
     for c in ["tp", "fp", "fn", "n_pred", "n_truth", "runtime_sec", "f1", "precision", "recall"]:
         ov[c] = pd.to_numeric(ov[c], errors="coerce")
@@ -186,8 +191,9 @@ def _write_summary(results):
     summary = pd.DataFrame(rows).sort_values("micro_f1", ascending=False)
     path = os.path.join(OUT_DIR, "summary.csv")
     summary.to_csv(path, index=False)
-    print(f"wrote {path}\n")
-    print(summary.to_string(index=False))
+    if verbose:
+        print(f"wrote {path}\n")
+        print(summary.to_string(index=False))
 
 
 def main():
