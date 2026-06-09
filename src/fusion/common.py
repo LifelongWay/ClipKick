@@ -149,14 +149,30 @@ def clip_window(t):
 
 
 # ── Post-processing + scoring ─────────────────────────────────────────────────
-def temporal_nms(events, min_gap=NMS_GAP, score_key="score", time_key="start"):
-    """Greedy NMS in time: keep highest-scoring events, drop neighbours within min_gap."""
-    if not events:
-        return []
+def _nms(events, min_gap, score_key, time_key):
     kept = []
     for e in sorted(events, key=lambda x: x[score_key], reverse=True):
         if all(abs(e[time_key] - k[time_key]) >= min_gap for k in kept):
             kept.append(e)
+    return kept
+
+
+def temporal_nms(events, min_gap=NMS_GAP, score_key="score", time_key="start",
+                 type_aware=False):
+    """Greedy NMS in time: keep highest-scoring events, drop neighbours within min_gap.
+
+    type_aware=True suppresses only within the same `event_type`, so e.g. a goal and
+    a penalty at the same moment both survive. Default False preserves cross-type
+    suppression (used by Models A/B/E)."""
+    if not events:
+        return []
+    if type_aware:
+        kept = []
+        for et in {e.get("event_type") for e in events}:
+            kept.extend(_nms([e for e in events if e.get("event_type") == et],
+                             min_gap, score_key, time_key))
+    else:
+        kept = _nms(events, min_gap, score_key, time_key)
     kept.sort(key=lambda e: e[time_key])
     return kept
 

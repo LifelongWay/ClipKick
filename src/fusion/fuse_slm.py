@@ -34,8 +34,10 @@ CHUNK_SEGMENTS = 30      # transcript segments per SLM call (fits ~8k context wi
 CHUNK_OVERLAP  = 5       # overlap so a moment on a boundary isn't lost
 PAD_PRE  = 6.0          # commentary lags play → generous pre-roll
 PAD_POST = 2.0
-BASE_SCORE = 0.75
-AGREE_BONUS = 0.1
+DEFAULT_CONF = 0.5      # used when the model omits confidence (or regex fallback)
+AGREE_BONUS = 0.05     # small boost when the same moment is flagged in >1 chunk
+SLM_NMS_GAP = 60.0     # same-type suppression window (collapses repeated mentions)
+SLM_MIN_CONF = 0.0     # default keeps all (preserves recall); raise to trade for precision
 MAX_NEW_TOKENS = 256
 
 
@@ -99,17 +101,24 @@ def build_or_load_transcript(match_id, audio_path, use_cache=True):
 class SLMExtractor:
     """Wraps an instruction-tuned causal LM that extracts highlights from commentary."""
 
-    SYSTEM = ("You are a football match highlight detector. You read commentary lines, each "
-              "prefixed with its time in seconds like [123]. Identify only genuine key moments: "
-              "goal, penalty, card, save. Reply with ONLY a JSON array of objects "
-              '{"time": <seconds int>, "type": "goal|penalty|card|save"} and nothing else. '
-              "Use the [seconds] tag of the line where the moment happens. If none, reply [].")
+    SYSTEM = (
+        "You are a football match highlight detector. You read commentary lines, each prefixed "
+        "with its time in seconds like [123]. Tag a moment ONLY if the commentary describes the "
+        "event happening LIVE at that instant: a goal being scored, a penalty awarded, a card "
+        "shown, or a save / shot off the woodwork. Do NOT tag retrospective mentions, replays, "
+        "statistics, build-up, or talk about earlier events (e.g. 'that was his second goal'). "
+        "For each live event return its [seconds] tag as time, the type "
+        "(goal|penalty|card|save), and confidence 0.0-1.0 = how sure it is a LIVE event and not "
+        "just a reference. Reply with ONLY a JSON array of "
+        '{"time": <int>, "type": "goal|penalty|card|save", "confidence": <float>} and nothing '
+        "else. If nothing is happening live, reply [].")
 
-    FEWSHOT_USER = ("[40] midfield battle continues\n"
-                    "[60] he shoots and it's a brilliant save by the keeper\n"
-                    "[95] long ball forward, cleared away\n"
+    FEWSHOT_USER = ("[40] and that's Ronaldo's second goal of the tournament, remember\n"
+                    "[60] he shoots — SAVED, a brilliant stop by the keeper!\n"
+                    "[95] long ball forward, headed clear\n"
                     "[120] GOAL! he smashes it into the top corner")
-    FEWSHOT_ASSISTANT = '[{"time": 60, "type": "save"}, {"time": 120, "type": "goal"}]'
+    FEWSHOT_ASSISTANT = ('[{"time": 60, "type": "save", "confidence": 0.9}, '
+                         '{"time": 120, "type": "goal", "confidence": 0.97}]')
 
     def __init__(self, model_id, device=None, dtype=None):
         from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -170,8 +179,15 @@ _TYPES = set(common.EVENT_TYPES)
 _FALLBACK = re.compile(r"(\d+)\D{0,20}?(goal|penalty|card|save)", re.IGNORECASE)
 
 
+def _clamp_conf(c):
+    try:
+        return max(0.0, min(1.0, float(c)))
+    except (TypeError, ValueError):
+        return DEFAULT_CONF
+
+
 def parse_slm_output(text):
-    """Return list of {time:int, type:str}. Try JSON first, then regex fallback."""
+    """Return list of {time:int, type:str, confidence:float}. JSON first, then regex."""
     hits = []
     m = re.search(r"\[.*\]", text, re.DOTALL)
     if m:
@@ -179,14 +195,15 @@ def parse_slm_output(text):
             for obj in json.loads(m.group(0)):
                 t, ty = obj.get("time"), str(obj.get("type", "")).lower()
                 if ty in _TYPES and t is not None:
-                    hits.append({"time": int(float(t)), "type": ty})
+                    conf = _clamp_conf(obj.get("confidence")) if "confidence" in obj else DEFAULT_CONF
+                    hits.append({"time": int(float(t)), "type": ty, "confidence": conf})
         except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
             pass
-    if not hits:  # regex fallback on malformed output
+    if not hits:  # regex fallback on malformed output — no confidence available
         for t, ty in _FALLBACK.findall(text):
             ty = ty.lower()
             if ty in _TYPES:
-                hits.append({"time": int(t), "type": ty})
+                hits.append({"time": int(t), "type": ty, "confidence": DEFAULT_CONF})
     return hits
 
 
@@ -213,10 +230,11 @@ def _chunks(segments, size=CHUNK_SEGMENTS, overlap=CHUNK_OVERLAP):
 
 
 def run_match(match_id, audio_path, model_id=DEFAULT_SLM, slm=None,
-              tag=None, use_cache=True, write=True):
+              tag=None, use_cache=True, write=True, min_confidence=SLM_MIN_CONF):
     """Extract highlights for one match. If `slm` (a preloaded SLMExtractor) is given
     it is reused (benchmark loads each model once); otherwise it is built here.
-    `tag` suffixes the output files so per-model results are not overwritten."""
+    `tag` suffixes the output files so per-model results are not overwritten.
+    `min_confidence` drops low-confidence detections (precision knob)."""
     segments = build_or_load_transcript(match_id, audio_path, use_cache=use_cache)
     if not segments:
         print(f"[{match_id}] empty transcript — nothing to do")
@@ -228,7 +246,7 @@ def run_match(match_id, audio_path, model_id=DEFAULT_SLM, slm=None,
         slm = SLMExtractor(model_id, device, dtype)
     suffix = ("__" + tag) if tag else ""
 
-    # tally per (rounded) anchor time so overlapping chunks can agree → bonus
+    # tally per (rounded) anchor time; keep the MAX confidence seen across chunks
     agree, typed = {}, {}
     for chunk in _chunks(segments):
         chunk_text = "\n".join(f"[{int(s0)}] {txt}" for s0, s1, txt in chunk if txt.strip())
@@ -240,18 +258,26 @@ def run_match(match_id, audio_path, model_id=DEFAULT_SLM, slm=None,
                 continue  # hallucinated time
             key = round((seg[0] + seg[1]) / 2.0)
             agree[key] = agree.get(key, 0) + 1
-            typed[key] = (seg, hit["type"])
+            prev = typed.get(key)
+            if prev is None or hit["confidence"] > prev[2]:
+                typed[key] = (seg, hit["type"], hit["confidence"])
 
     highlights, detail = [], []
-    for key, (seg, etype) in typed.items():
+    for key, (seg, etype, conf) in typed.items():
         s0, s1, text = seg
-        score = min(1.0, BASE_SCORE + (AGREE_BONUS if agree[key] > 1 else 0.0))
+        score = min(1.0, conf + (AGREE_BONUS if agree[key] > 1 else 0.0))
+        if score < min_confidence:
+            continue  # precision filter
         h = {"start": round(max(0.0, s0 - PAD_PRE), 2), "end": round(s1 + PAD_POST, 2),
              "event_type": etype, "score": round(score, 4)}
         highlights.append(h)
         detail.append({**h, "text": text})
 
-    highlights = common.temporal_nms(highlights)
+    # same-type 60s suppression collapses repeated mentions of one event
+    highlights = common.temporal_nms(highlights, min_gap=SLM_NMS_GAP, type_aware=True)
+    # keep detail rows aligned with the survivors
+    kept_keys = {(h["start"], h["event_type"]) for h in highlights}
+    detail = [d for d in detail if (d["start"], d["event_type"]) in kept_keys]
     print(f"[{match_id}] SLM produced {len(highlights)} highlights")
     if write:
         common.write_highlights(match_id, highlights, suffix=suffix)
@@ -290,6 +316,8 @@ def main():
     parser.add_argument("--eval", action="store_true")
     parser.add_argument("--no-cache", action="store_true")
     parser.add_argument("--clips", action="store_true", help="export video clips (needs --video)")
+    parser.add_argument("--min-confidence", type=float, default=SLM_MIN_CONF,
+                        help="drop detections below this score (precision knob; 0 keeps all)")
     args = parser.parse_args()
 
     ids = [args.match] if args.match else timeline._all_match_ids()
@@ -303,7 +331,8 @@ def main():
             print(f"[{mid}] no audio (looked for {audio}) — pass --audio or --video")
             continue
 
-        hl = run_match(mid, audio, model_id=args.model, use_cache=not args.no_cache)
+        hl = run_match(mid, audio, model_id=args.model, use_cache=not args.no_cache,
+                       min_confidence=args.min_confidence)
         if args.eval:
             evaluate.evaluate(hl, mid)
         if args.clips:
