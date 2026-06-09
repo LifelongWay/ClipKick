@@ -4,6 +4,7 @@ torch
 torchaudio
 transformers>=5.5
 accelerate
+bitsandbytes              # 4-bit quantized SLMs (e.g. Qwen2.5-32B-Instruct-bnb-4bit)
 opencv-contrib-python      # TrackerCSRT lives in contrib (process_video.py)
 moviepy
 librosa

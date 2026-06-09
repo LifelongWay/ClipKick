@@ -35,6 +35,7 @@ DEFAULT_MODELS = [
     "google/gemma-2-2b-it",          # gated — needs HF_TOKEN + accepted license
     "Qwen/Qwen2.5-7B-Instruct",      # ~15 GB bf16 — use A100
     "google/gemma-2-9b-it",          # ~18 GB bf16, gated — use A100 + HF_TOKEN
+    "unsloth/Qwen2.5-32B-Instruct-bnb-4bit",  # 4-bit 32B (~20 GB) — needs bitsandbytes, use A100
 ]
 
 OUT_DIR = "results/benchmark"

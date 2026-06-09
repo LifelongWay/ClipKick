@@ -107,18 +107,32 @@ class SLMExtractor:
         "event happening LIVE at that instant: a goal being scored, a penalty awarded, a card "
         "shown, or a save / shot off the woodwork. Do NOT tag retrospective mentions, replays, "
         "statistics, build-up, or talk about earlier events (e.g. 'that was his second goal'). "
+        "A goal counts even when stated plainly ('it's one-nil', 'in the back of the net', "
+        "'he makes it two'), not only when shouted as 'GOAL!'. "
         "For each live event return its [seconds] tag as time, the type "
-        "(goal|penalty|card|save), and confidence 0.0-1.0 = how sure it is a LIVE event and not "
-        "just a reference. Reply with ONLY a JSON array of "
+        "(goal|penalty|card|save), and a confidence 0.0-1.0: use ~0.9+ for a clear, unmistakable "
+        "live event, ~0.6-0.8 for a likely-but-uncertain one (an appeal, a half-chance, a moment "
+        "under review), and simply skip anything you are not reasonably sure happened live. "
+        "Reply with ONLY a JSON array of "
         '{"time": <int>, "type": "goal|penalty|card|save", "confidence": <float>} and nothing '
         "else. If nothing is happening live, reply [].")
 
-    FEWSHOT_USER = ("[40] and that's Ronaldo's second goal of the tournament, remember\n"
-                    "[60] he shoots — SAVED, a brilliant stop by the keeper!\n"
-                    "[95] long ball forward, headed clear\n"
-                    "[120] GOAL! he smashes it into the top corner")
+    FEWSHOT_USER = (
+        "[40] and that's Ronaldo's second goal of the tournament, remember\n"        # retrospective goal
+        "[60] he shoots — SAVED, a brilliant stop by the keeper!\n"                  # live save (clear)
+        "[95] long ball forward, headed clear\n"                                     # nothing
+        "[120] GOAL! he smashes it into the top corner\n"                            # live goal (loud)
+        "[135] de gea goes the wrong way and it's in, one-nil portugal\n"            # live goal (subtle, no 'GOAL!')
+        "[150] he goes down in the area and the referee points to the spot, penalty\n"  # live penalty (clear)
+        "[175] he should have been booked for that one earlier, you'd think\n"       # retrospective card
+        "[200] the referee shows him a yellow card for the late challenge\n"         # live card
+        "[230] a penalty appeal as he tumbles, the referee is taking another look")  # uncertain penalty
     FEWSHOT_ASSISTANT = ('[{"time": 60, "type": "save", "confidence": 0.9}, '
-                         '{"time": 120, "type": "goal", "confidence": 0.97}]')
+                         '{"time": 120, "type": "goal", "confidence": 0.96}, '
+                         '{"time": 135, "type": "goal", "confidence": 0.85}, '
+                         '{"time": 150, "type": "penalty", "confidence": 0.92}, '
+                         '{"time": 200, "type": "card", "confidence": 0.9}, '
+                         '{"time": 230, "type": "penalty", "confidence": 0.6}]')
 
     def __init__(self, model_id, device=None, dtype=None):
         from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -126,15 +140,22 @@ class SLMExtractor:
             device, dtype = pick_slm_device()
         self.model_id = model_id
         self.tok = AutoTokenizer.from_pretrained(model_id)
-        # Prefer the NATIVE transformers implementation (Phi-3.5's own remote code is
-        # outdated and crashes on newer transformers: DynamicCache.seen_tokens). Only
-        # fall back to remote code if a model genuinely isn't natively supported.
-        try:
-            self.model = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype).to(device)
-        except (ValueError, KeyError):
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_id, dtype=dtype, trust_remote_code=True).to(device)
-        self.device = device
+        if any(k in model_id.lower() for k in ("bnb", "4bit", "8bit", "gptq", "awq")):
+            # Pre-quantized (e.g. bitsandbytes 4-bit): quant config is baked into the
+            # weights, device_map places it, and you must NOT call .to() on it.
+            # Needs bitsandbytes + accelerate installed.
+            self.model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto")
+            self.device = next(self.model.parameters()).device  # for input-tensor placement
+        else:
+            # Prefer the NATIVE transformers implementation (Phi-3.5's own remote code is
+            # outdated and crashes on newer transformers: DynamicCache.seen_tokens). Only
+            # fall back to remote code if a model genuinely isn't natively supported.
+            try:
+                self.model = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype).to(device)
+            except (ValueError, KeyError):
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_id, dtype=dtype, trust_remote_code=True).to(device)
+            self.device = device
 
     def _render(self, chunk_text):
         """Apply the chat template; fall back to merging system into the first user
