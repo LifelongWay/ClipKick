@@ -1,10 +1,14 @@
 {
   "match_id": "2018WC_Portugal_vs_Spain",
   "events": [
-    {"start": 370, "end": 371, "type": "goal"},
-    {"start": 1544, "end": 1545, "type": "goal"},
-    {"start": 2779, "end": 2780, "type": "goal"},
-    {"start": 3514, "end": 3518, "type": "goal"},
-    {"start": 5484, "end": 5487, "type": "goal"}
+    {"start": 270, "end": 300, "type": "penalty", "source": "report", "note": "Ronaldo fouled by Nacho"},
+    {"start": 350, "end": 380, "type": "goal", "source": "report", "note": "Ronaldo penalty, 1-0"},
+    {"start": 1170, "end": 1200, "type": "card", "source": "report", "note": "Guedes yellow card"},
+    {"start": 1570, "end": 1600, "type": "goal", "source": "report", "note": "Diego Costa, 1-1"},
+    {"start": 1660, "end": 1690, "type": "save", "source": "report", "note": "Isco hits the bar"},
+    {"start": 2770, "end": 2800, "type": "goal", "source": "report", "note": "Ronaldo, 2-1"},
+    {"start": 3490, "end": 3520, "type": "goal", "source": "report", "note": "Diego Costa, 2-2"},
+    {"start": 3690, "end": 3760, "type": "goal", "source": "report", "note": "Nacho, 2-3"},
+    {"start": 5510, "end": 5540, "type": "goal", "source": "report", "note": "Ronaldo hat-trick, 3-3"}
   ]
 }

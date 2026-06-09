@@ -42,6 +42,16 @@ def _audio_for(match_id):
     return p if os.path.exists(p) else None
 
 
+def _discover_matches():
+    """Match ids from the audio-energy layer, the audio folder, or cached transcripts."""
+    ids = set(timeline._all_match_ids())
+    for d in ("data/raw/audio", fuse_slm.TRANSCRIPT_DIR):
+        if os.path.isdir(d):
+            ids.update(os.path.splitext(f)[0] for f in os.listdir(d)
+                       if f.endswith((".mp3", ".wav", ".csv")))
+    return sorted(ids)
+
+
 def _rows_from_report(slm, match_id, report, runtime):
     """Flatten an evaluate() report dict into long-format rows (overall + per type)."""
     rows = []
@@ -138,9 +148,10 @@ def main():
     args = parser.parse_args()
 
     models = args.models.split(",") if args.models else DEFAULT_MODELS
-    matches = args.matches.split(",") if args.matches else timeline._all_match_ids()
+    matches = args.matches.split(",") if args.matches else _discover_matches()
     if not matches:
-        print("no matches found (need results/audio/rms or data/raw/audio)")
+        print("no matches found (need data/raw/audio/<id>.mp3, a cached transcript, "
+              "or results/audio/rms) — or pass --matches <id>")
         return
     print(f"Models: {models}\nMatches: {matches}")
     run(models, matches)
