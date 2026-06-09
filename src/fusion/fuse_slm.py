@@ -116,9 +116,15 @@ class SLMExtractor:
         if device is None:
             device, dtype = pick_slm_device()
         self.model_id = model_id
-        self.tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_id, torch_dtype=dtype, trust_remote_code=True).to(device)
+        self.tok = AutoTokenizer.from_pretrained(model_id)
+        # Prefer the NATIVE transformers implementation (Phi-3.5's own remote code is
+        # outdated and crashes on newer transformers: DynamicCache.seen_tokens). Only
+        # fall back to remote code if a model genuinely isn't natively supported.
+        try:
+            self.model = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype).to(device)
+        except (ValueError, KeyError):
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_id, dtype=dtype, trust_remote_code=True).to(device)
         self.device = device
 
     def _render(self, chunk_text):

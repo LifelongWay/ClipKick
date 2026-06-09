@@ -28,10 +28,13 @@ except ImportError:
     import common, evaluate, fuse_slm, timeline
 
 DEFAULT_MODELS = [
+    # small → large, so cheap results land first and a big-model OOM costs least
     "HuggingFaceTB/SmolLM2-1.7B-Instruct",
     "Qwen/Qwen2.5-1.5B-Instruct",
     "microsoft/Phi-3.5-mini-instruct",
-    "google/gemma-2-2b-it",   # gated — needs HF_TOKEN + accepted license
+    "google/gemma-2-2b-it",          # gated — needs HF_TOKEN + accepted license
+    "Qwen/Qwen2.5-7B-Instruct",      # ~15 GB bf16 — use A100
+    "google/gemma-2-9b-it",          # ~18 GB bf16, gated — use A100 + HF_TOKEN
 ]
 
 OUT_DIR = "results/benchmark"
@@ -95,13 +98,24 @@ def run(models, matches):
             if not audio:
                 print(f"[{mid}] no audio — skip")
                 continue
-            t0 = time.perf_counter()
-            hl = fuse_slm.run_match(mid, audio, model_id=model_id, slm=slm, tag=tag)
-            runtime = time.perf_counter() - t0
-            report = evaluate.evaluate(hl, mid, verbose=True)
-            all_rows.extend(_rows_from_report(tag, mid, report, runtime))
+            try:
+                t0 = time.perf_counter()
+                hl = fuse_slm.run_match(mid, audio, model_id=model_id, slm=slm, tag=tag)
+                runtime = time.perf_counter() - t0
+                report = evaluate.evaluate(hl, mid, verbose=True)
+                all_rows.extend(_rows_from_report(tag, mid, report, runtime))
+            except Exception as e:  # one match failing must not lose the whole benchmark
+                print(f"[{mid}] {tag} FAILED: {type(e).__name__}: {e}")
+                all_rows.append({"slm": tag, "match": mid, "scope": "failed",
+                                 "precision": "", "recall": "", "f1": "", "tp": "", "fp": "",
+                                 "fn": "", "n_pred": "", "n_truth": "", "runtime_sec": ""})
+            # persist after every match so a later crash never wipes earlier results
+            pd.DataFrame(all_rows).to_csv(os.path.join(OUT_DIR, "results.csv"), index=False)
 
-        slm.close()  # free GPU before the next model
+        try:
+            slm.close()  # free GPU before the next model
+        except Exception:
+            pass
 
     results = pd.DataFrame(all_rows)
     results_path = os.path.join(OUT_DIR, "results.csv")
