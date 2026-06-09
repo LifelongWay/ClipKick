@@ -23,6 +23,21 @@ except ImportError:
 CLIPS_DIR = "results/clips"
 
 
+def _moviepy():
+    """Import moviepy across 1.x (moviepy.editor) and 2.x (top-level)."""
+    try:
+        from moviepy import VideoFileClip, concatenate_videoclips        # 2.x
+    except ImportError:
+        from moviepy.editor import VideoFileClip, concatenate_videoclips  # 1.x
+    return VideoFileClip, concatenate_videoclips
+
+
+def _subclip(clip, a, b):
+    """`.subclipped` on moviepy 2.x, `.subclip` on 1.x."""
+    fn = getattr(clip, "subclipped", None) or clip.subclip
+    return fn(a, b)
+
+
 def _load(highlights_csv):
     if not os.path.exists(highlights_csv):
         print(f"no highlights CSV at {highlights_csv}")
@@ -47,7 +62,7 @@ def export(match_id, video_path, highlights_csv=None, out_dir=None, reel=False, 
         print(f"[{match_id}] video not found: {video_path}")
         return []
 
-    from moviepy import VideoFileClip, concatenate_videoclips
+    VideoFileClip, concatenate_videoclips = _moviepy()
 
     rows.sort(key=lambda r: -r["score"] if sort == "score" else r["start"])
 
@@ -63,7 +78,7 @@ def export(match_id, video_path, highlights_csv=None, out_dir=None, reel=False, 
         if end <= start:
             print(f"[{match_id}] skip clip {i} — empty/out-of-range [{r['start']}, {r['end']}]")
             continue
-        clip = source.subclipped(start, end)
+        clip = _subclip(source, start, end)
         name = f"{i:02d}_{r['event_type']}_{int(start)}s.mp4"
         path = os.path.join(out_dir, name)
         clip.write_videofile(path, codec="libx264", audio_codec="aac", logger=None)

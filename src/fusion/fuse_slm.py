@@ -46,6 +46,21 @@ def _add_speech_path():
         sys.path.insert(0, speech_dir)
 
 
+def model_tag(model_id):
+    """Short filesystem-safe tag from a HF model id, e.g. 'smollm2-1.7b-instruct'."""
+    return model_id.rstrip("/").split("/")[-1].lower()
+
+
+def pick_slm_device():
+    """SLMs prefer bf16 (Phi-3.5 / Gemma-2 / Qwen are bf16-native; fp16 can NaN on Gemma)."""
+    import torch
+    if torch.cuda.is_available():
+        return "cuda", torch.bfloat16
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps", torch.float16
+    return "cpu", torch.float32
+
+
 # ── Stage 1: transcript (cached) ──────────────────────────────────────────────
 def build_or_load_transcript(match_id, audio_path, use_cache=True):
     """Return list of (start_sec, end_sec, text). Cache to disk; reuse if present."""
@@ -96,26 +111,52 @@ class SLMExtractor:
                     "[120] GOAL! he smashes it into the top corner")
     FEWSHOT_ASSISTANT = '[{"time": 60, "type": "save"}, {"time": 120, "type": "goal"}]'
 
-    def __init__(self, model_id, device, dtype):
+    def __init__(self, model_id, device=None, dtype=None):
         from transformers import AutoTokenizer, AutoModelForCausalLM
-        self.tok = AutoTokenizer.from_pretrained(model_id)
-        self.model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype).to(device)
+        if device is None:
+            device, dtype = pick_slm_device()
+        self.model_id = model_id
+        self.tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_id, torch_dtype=dtype, trust_remote_code=True).to(device)
         self.device = device
 
-    def extract(self, chunk_text):
-        import torch
-        messages = [
+    def _render(self, chunk_text):
+        """Apply the chat template; fall back to merging system into the first user
+        message for templates that reject a 'system' role (e.g. Gemma-2)."""
+        msgs_sys = [
             {"role": "system", "content": self.SYSTEM},
             {"role": "user", "content": self.FEWSHOT_USER},
             {"role": "assistant", "content": self.FEWSHOT_ASSISTANT},
             {"role": "user", "content": chunk_text},
         ]
-        prompt = self.tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        try:
+            return self.tok.apply_chat_template(msgs_sys, tokenize=False, add_generation_prompt=True)
+        except Exception:
+            msgs_no_sys = [
+                {"role": "user", "content": self.SYSTEM + "\n\n" + self.FEWSHOT_USER},
+                {"role": "assistant", "content": self.FEWSHOT_ASSISTANT},
+                {"role": "user", "content": chunk_text},
+            ]
+            return self.tok.apply_chat_template(msgs_no_sys, tokenize=False, add_generation_prompt=True)
+
+    def extract(self, chunk_text):
+        import torch
+        prompt = self._render(chunk_text)
         inputs = self.tok(prompt, return_tensors="pt").to(self.device)
         with torch.no_grad():
             out = self.model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
         gen = out[0][inputs["input_ids"].shape[1]:]
         return self.tok.decode(gen, skip_special_tokens=True)
+
+    def close(self):
+        """Free GPU memory so the benchmark can load the next model."""
+        import gc
+        import torch
+        del self.model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 # ── Defensive parsing of SLM output ───────────────────────────────────────────
@@ -145,14 +186,14 @@ def parse_slm_output(text):
 
 # ── Timing: snap to a real segment, drop hallucinated times ───────────────────
 def snap_to_segment(t, segments, window_sec=20.0):
-    """Nearest segment (start,end) to time t, or None if farther than a window
+    """Nearest segment (start, end, text) to time t, or None if farther than a window
     (the SLM hallucinated a time with no matching transcribed audio)."""
     best, best_d = None, 1e9
-    for s0, s1, _ in segments:
-        center = (s0 + s1) / 2.0
+    for seg in segments:
+        center = (seg[0] + seg[1]) / 2.0
         d = abs(t - center)
         if d < best_d:
-            best, best_d = (s0, s1), d
+            best, best_d = seg, d
     if best is None or best_d > window_sec:
         return None
     return best
@@ -165,23 +206,24 @@ def _chunks(segments, size=CHUNK_SEGMENTS, overlap=CHUNK_OVERLAP):
         yield segments[i:i + size]
 
 
-def run_match(match_id, audio_path, model_id=DEFAULT_SLM, use_cache=True, write=True):
+def run_match(match_id, audio_path, model_id=DEFAULT_SLM, slm=None,
+              tag=None, use_cache=True, write=True):
+    """Extract highlights for one match. If `slm` (a preloaded SLMExtractor) is given
+    it is reused (benchmark loads each model once); otherwise it is built here.
+    `tag` suffixes the output files so per-model results are not overwritten."""
     segments = build_or_load_transcript(match_id, audio_path, use_cache=use_cache)
     if not segments:
         print(f"[{match_id}] empty transcript — nothing to do")
         return []
 
-    _add_speech_path()  # so snap_to_segment can import WINDOW_SEC
-    import torch
-    device = "cuda" if torch.cuda.is_available() else (
-        "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu")
-    dtype = torch.float16 if device != "cpu" else torch.float32
-    print(f"[{match_id}] SLM {model_id} on {device}")
-    slm = SLMExtractor(model_id, device, dtype)
+    if slm is None:
+        device, dtype = pick_slm_device()
+        print(f"[{match_id}] SLM {model_id} on {device}")
+        slm = SLMExtractor(model_id, device, dtype)
+    suffix = ("__" + tag) if tag else ""
 
     # tally per (rounded) anchor time so overlapping chunks can agree → bonus
-    agree = {}
-    typed = {}
+    agree, typed = {}, {}
     for chunk in _chunks(segments):
         chunk_text = "\n".join(f"[{int(s0)}] {txt}" for s0, s1, txt in chunk if txt.strip())
         if not chunk_text:
@@ -194,25 +236,38 @@ def run_match(match_id, audio_path, model_id=DEFAULT_SLM, use_cache=True, write=
             agree[key] = agree.get(key, 0) + 1
             typed[key] = (seg, hit["type"])
 
-    highlights = []
+    highlights, detail = [], []
     for key, (seg, etype) in typed.items():
-        s0, s1 = seg
+        s0, s1, text = seg
         score = min(1.0, BASE_SCORE + (AGREE_BONUS if agree[key] > 1 else 0.0))
-        highlights.append({
-            "start": round(max(0.0, s0 - PAD_PRE), 2),
-            "end":   round(s1 + PAD_POST, 2),
-            "event_type": etype,
-            "score": round(score, 4),
-        })
+        h = {"start": round(max(0.0, s0 - PAD_PRE), 2), "end": round(s1 + PAD_POST, 2),
+             "event_type": etype, "score": round(score, 4)}
+        highlights.append(h)
+        detail.append({**h, "text": text})
+
     highlights = common.temporal_nms(highlights)
     print(f"[{match_id}] SLM produced {len(highlights)} highlights")
     if write:
-        common.write_highlights(match_id, highlights)
+        common.write_highlights(match_id, highlights, suffix=suffix)
+        _write_detail(match_id, detail, suffix)
     return highlights
 
 
+def _write_detail(match_id, detail, suffix):
+    """Per-highlight commentary record: which transcript line triggered each pick."""
+    import pandas as pd
+    os.makedirs(common.HIGHLIGHTS_DIR, exist_ok=True)
+    path = os.path.join(common.HIGHLIGHTS_DIR, match_id + suffix + "_detail.csv")
+    detail = sorted(detail, key=lambda d: d["start"])
+    pd.DataFrame(detail, columns=["start", "end", "event_type", "score", "text"]).to_csv(path, index=False)
+    print(f"[{match_id}] detail (with commentary) → {path}")
+
+
 def _extract_audio_from_video(video_path):
-    from moviepy import VideoFileClip
+    try:
+        from moviepy import VideoFileClip          # moviepy 2.x
+    except ImportError:
+        from moviepy.editor import VideoFileClip    # moviepy 1.x
     mp3 = os.path.splitext(video_path)[0] + ".mp3"
     if not os.path.exists(mp3):
         print(f"extracting audio → {mp3}")
