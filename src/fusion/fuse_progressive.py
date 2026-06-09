@@ -80,8 +80,8 @@ def run_match(match_id, audio_path, write=True):
     # Heavy imports are lazy so the pure helpers above stay importable without a GPU.
     import librosa
     _add_speech_path()
-    from build_ground_truth import (GraniteTranscriber, compile_lexicon, pick_device,
-                                     LEXICON, MODEL_ID, TARGET_SR, WINDOW_SEC, HOP_SEC)
+    from granite_asr import (GraniteTranscriber, compile_lexicon, pick_device,
+                             LEXICON, MODEL_ID, TARGET_SR, WINDOW_SEC, HOP_SEC)
     from speech_layer import windows_to_events, GATE_PRE, GATE_POST
 
     audio_times = [a["time"] for a in common.load_audio_events(match_id)]

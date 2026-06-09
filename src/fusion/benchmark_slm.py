@@ -88,7 +88,7 @@ def _score_match(method, mid, hl, runtime, all_rows, conf_acc):
 
 
 def run(models, matches, with_model_a=False, with_model_g=False,
-        g_model="Qwen/Qwen2.5-7B-Instruct"):
+        g_model="Qwen/Qwen2.5-7B-Instruct", g_ctx=fuse_hybrid.CTX):
     os.makedirs(OUT_DIR, exist_ok=True)
     os.makedirs(CONF_DIR, exist_ok=True)
     # Build every transcript once up-front (Granite), so the model loop is GPU-light.
@@ -141,7 +141,7 @@ def run(models, matches, with_model_a=False, with_model_g=False,
                     continue
                 try:
                     t0 = time.perf_counter()
-                    hl = fuse_hybrid.run_match(mid, audio, slm=verifier, tag=method)
+                    hl = fuse_hybrid.run_match(mid, audio, slm=verifier, tag=method, ctx=g_ctx)
                     runtime = time.perf_counter() - t0
                     _score_match(method, mid, hl, runtime, all_rows, conf_acc)
                 except Exception as e:
@@ -239,6 +239,8 @@ def main():
                         help="also benchmark Model G (SLM-verified cascade over Model A candidates)")
     parser.add_argument("--g-model", default="Qwen/Qwen2.5-7B-Instruct",
                         help="verifier SLM for Model G")
+    parser.add_argument("--g-ctx", type=float, default=fuse_hybrid.CTX,
+                        help="Model G context window (seconds each side of a candidate)")
     args = parser.parse_args()
 
     if args.models is None:
@@ -256,7 +258,7 @@ def main():
              + (f"model_G({args.g_model}) + " if args.with_model_g else ""))
     print(f"Methods: {extra}{models}\nMatches: {matches}")
     run(models, matches, with_model_a=args.with_model_a,
-        with_model_g=args.with_model_g, g_model=args.g_model)
+        with_model_g=args.with_model_g, g_model=args.g_model, g_ctx=args.g_ctx)
 
 
 if __name__ == "__main__":

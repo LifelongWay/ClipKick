@@ -53,15 +53,12 @@ python src/fusion/timeline.py --match <id>
 
 ---
 
-## 3. Ground truth (F4) — optional, regenerates annotations from Granite
+## 3. Ground truth — hand-curated, not generated
 
-```bash
-python src/speech/build_ground_truth.py --match <id>        # overwrites data/annotations/<id>.json
-python src/speech/build_ground_truth.py                     # all matches
-python src/speech/build_ground_truth.py --match <id> --fp32 # if MPS fp16 misbehaves
-```
-> Backs up the original human labels to `data/annotations_original/` first. The 2018WC match already
-> has hand-made 9-event annotations — don't overwrite those unless you want Granite's version.
+Annotations in `data/annotations/<id>.json` are **hand-curated from match reports** (multi-event:
+goal/penalty/card/save). There is **no** ground-truth generator — the old `build_ground_truth.py`
+script was removed; its Granite transcription code now lives in `src/speech/granite_asr.py` (a library,
+not a runnable command). Edit the JSON files directly to change ground truth.
 
 ---
 
@@ -193,14 +190,6 @@ python src/fusion/export_clips.py --highlights results/fusion/highlights/<id>__<
 
 ### `src/audio/audio_layer.py` — energy layer
 *No flags* — processes every file in `data/raw/audio/`.
-
-### `src/speech/build_ground_truth.py` — F4 (Granite → annotations)
-| Flag | What it's for |
-|---|---|
-| `--match` | only this match (default: all) |
-| `--audio-dir` | where the mp3s live (default `data/raw/audio`) |
-| `--out-dir` | where annotations are written (default `data/annotations`) |
-| `--fp32` | force float32 if MPS fp16 produces empty/NaN output |
 
 ### `src/speech/speech_layer.py` — F1 (speech signals for A/B)
 | Flag | What it's for |

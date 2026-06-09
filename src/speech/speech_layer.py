@@ -12,7 +12,7 @@ Two modes:
   * sliding (default) — whole match in overlapping windows (recall / weak-label mining)
   * gated            — only windows around audio events (cheap; the cascade default)
 
-Reuses the model wrapper + lexicon from build_ground_truth.py (F4) so there is one
+Reuses the model wrapper + lexicon from granite_asr.py so there is one
 Granite code path. Run from project root:
 
     python src/speech/speech_layer.py --audio data/raw/audio/<match>.mp3
@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 # Same-directory import (script dir is on sys.path when run as `python src/speech/...`).
-from build_ground_truth import (
+from granite_asr import (
     GraniteTranscriber, compile_lexicon, match_events, pick_device,
     LEXICON, MODEL_ID, TARGET_SR, WINDOW_SEC, HOP_SEC, SILENCE_THRESH,
 )

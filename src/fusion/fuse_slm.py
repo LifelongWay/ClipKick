@@ -76,7 +76,7 @@ def build_or_load_transcript(match_id, audio_path, use_cache=True):
     # No cache → run Granite over the whole match.
     import librosa
     _add_speech_path()
-    from build_ground_truth import GraniteTranscriber, pick_device, MODEL_ID, TARGET_SR
+    from granite_asr import GraniteTranscriber, pick_device, MODEL_ID, TARGET_SR
     from speech_layer import sliding_windows, iter_window_transcripts
 
     print(f"[{match_id}] no transcript cache — transcribing with Granite…")
