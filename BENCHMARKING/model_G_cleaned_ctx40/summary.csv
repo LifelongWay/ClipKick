@@ -1,0 +1,2 @@
+slm,micro_precision,micro_recall,micro_f1,macro_f1,mean_n_pred,mean_n_truth,mean_runtime_sec
+g-qwen2.5-7b-instruct,0.2097,0.4062,0.2766,0.2809,20.7,10.7,113.5

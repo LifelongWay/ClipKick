@@ -1,0 +1,2 @@
+slm,micro_precision,micro_recall,micro_f1,macro_f1,mean_n_pred,mean_n_truth,mean_runtime_sec
+model_A,0.1574,0.5312,0.2429,0.181,36.0,10.7,0.0

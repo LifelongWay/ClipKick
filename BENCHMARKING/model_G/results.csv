@@ -1,0 +1,15 @@
+slm,match,scope,precision,recall,f1,tp,fp,fn,n_pred,n_truth,runtime_sec
+g-qwen2.5-7b-instruct,2014_15_LaLiga_FC_Barcelona_vs_Atletico_Madrid,overall,0.3333333333333333,0.4,0.3636363636363636,4,8,6,12,10,61.82
+g-qwen2.5-7b-instruct,2014_15_LaLiga_FC_Barcelona_vs_Atletico_Madrid,goal,0.0,0.0,0.0,0,2,4,,,
+g-qwen2.5-7b-instruct,2014_15_LaLiga_FC_Barcelona_vs_Atletico_Madrid,penalty,0.25,1.0,0.4,1,3,0,,,
+g-qwen2.5-7b-instruct,2014_15_LaLiga_FC_Barcelona_vs_Atletico_Madrid,card,0.3333333333333333,0.4,0.3636363636363636,2,4,3,,,
+g-qwen2.5-7b-instruct,2018WC_Portugal_vs_Spain,overall,0.35714285714285715,0.5555555555555556,0.43478260869565216,5,9,4,14,9,56.95
+g-qwen2.5-7b-instruct,2018WC_Portugal_vs_Spain,goal,0.42857142857142855,0.5,0.4615384615384615,3,4,3,,,
+g-qwen2.5-7b-instruct,2018WC_Portugal_vs_Spain,penalty,0.0,0.0,0.0,0,2,1,,,
+g-qwen2.5-7b-instruct,2018WC_Portugal_vs_Spain,card,0.0,0.0,0.0,0,3,1,,,
+g-qwen2.5-7b-instruct,2018WC_Portugal_vs_Spain,save,0.0,0.0,0.0,0,2,1,,,
+g-qwen2.5-7b-instruct,2025_26_LaLiga_Betis_vs_FC_Barcelona_MD15,overall,0.2857142857142857,0.3076923076923077,0.29629629629629634,4,10,9,14,13,84.45
+g-qwen2.5-7b-instruct,2025_26_LaLiga_Betis_vs_FC_Barcelona_MD15,goal,0.3333333333333333,0.25,0.28571428571428575,2,4,6,,,
+g-qwen2.5-7b-instruct,2025_26_LaLiga_Betis_vs_FC_Barcelona_MD15,penalty,0.0,0.0,0.0,0,5,2,,,
+g-qwen2.5-7b-instruct,2025_26_LaLiga_Betis_vs_FC_Barcelona_MD15,card,0.5,0.3333333333333333,0.4,1,1,2,,,
+g-qwen2.5-7b-instruct,2025_26_LaLiga_Betis_vs_FC_Barcelona_MD15,save,0.0,0.0,0.0,0,1,0,,,

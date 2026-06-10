@@ -1,0 +1,6 @@
+true\pred,goal,penalty,card,save,(missed)
+goal,8,2,0,0,8
+penalty,0,2,0,0,2
+card,0,0,3,0,6
+save,1,0,0,0,0
+(false_alarm),19,9,12,2,0

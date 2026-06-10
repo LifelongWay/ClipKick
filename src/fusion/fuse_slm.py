@@ -290,12 +290,24 @@ def _chunks(segments, size=CHUNK_SEGMENTS, overlap=CHUNK_OVERLAP):
         yield segments[i:i + size]
 
 
+# Strip Granite chat-template scaffolding that leaked into the transcript text.
+# OPT-IN only (clean=True); default keeps the raw transcript so the baseline is unchanged.
+_ROLE = re.compile(r"(?i)\b(?:user|assistant|system)\s*:")
+
+
+def clean_text(s):
+    return re.sub(r"\s+", " ", _ROLE.sub(" ", str(s))).strip()
+
+
 def run_match(match_id, audio_path, model_id=DEFAULT_SLM, slm=None,
-              tag=None, use_cache=True, write=True, min_confidence=SLM_MIN_CONF):
+              tag=None, use_cache=True, write=True, min_confidence=SLM_MIN_CONF,
+              clean=False):
     """Extract highlights for one match. If `slm` (a preloaded SLMExtractor) is given
     it is reused (benchmark loads each model once); otherwise it is built here.
     `tag` suffixes the output files so per-model results are not overwritten.
-    `min_confidence` drops low-confidence detections (precision knob)."""
+    `min_confidence` drops low-confidence detections (precision knob).
+    `clean=True` strips Granite chat-template artifacts from the transcript IN-MEMORY
+    (default False = raw transcript, identical to the original baseline)."""
     segments = build_or_load_transcript(match_id, audio_path, use_cache=use_cache)
     if not segments:
         print(f"[{match_id}] empty transcript — nothing to do")
@@ -303,6 +315,8 @@ def run_match(match_id, audio_path, model_id=DEFAULT_SLM, slm=None,
     # Feed the SLM non-overlapping windows (no repeated commentary). Lines are tagged
     # with the window CENTER so it matches snap_to_segment's center-based lookup.
     slm_segments = _dedupe_overlap(segments)
+    if clean:
+        slm_segments = [(s0, s1, clean_text(txt)) for s0, s1, txt in slm_segments]
 
     if slm is None:
         device, dtype = pick_slm_device()
